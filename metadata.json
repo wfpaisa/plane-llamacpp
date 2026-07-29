@@ -1,8 +1,9 @@
 {
-    "name": "plane-asr",
-    "description": "asr local",
-    "uuid": "planeasr@wfelipe.com",
-    "url": "https://github.com/wfpaisa/plane-asr",
-    "settings-schema": "org.gnome.shell.extensions.planeasr",
-    "shell-version": ["50"]
+    "name": "Plane Llamacpp",
+    "description": "Create a custom menu in the GNOME top bar to run your favorite commands. Add entries to launch apps, execute shell commands, run scripts, and more through a simple, intuitive interface.",
+    "uuid": "plane-llamacpp@wfelipe.com",
+    "url": "https://github.com/wfpaisa/plane-llamacpp",
+    "settings-schema": "org.gnome.shell.extensions.plane-llamacpp",
+    "shell-version": ["50"],
+    "version": 1
 }

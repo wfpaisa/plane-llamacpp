@@ -1,19 +1,19 @@
 {
-    "name": "plane-asr",
+    "name": "plane-llamacpp",
     "version": "0.0.0",
-    "description": "Plane ASR — a local ASR GNOME Shell extension",
+    "description": "Plane Llamacpp — a local ASR GNOME Shell extension powered by llama.cpp",
     "type": "module",
     "private": true,
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/wfpaisa/plane-asr.git"
+        "url": "git+https://github.com/wfpaisa/plane-llamacpp.git"
     },
     "author": "Felipe Uribe",
     "license": "GPL-2.0-or-later",
     "bugs": {
-        "url": "https://github.com/wfpaisa/plane-asr/issues"
+        "url": "https://github.com/wfpaisa/plane-llamacpp/issues"
     },
-    "homepage": "https://github.com/wfpaisa/plane-asr#readme",
+    "homepage": "https://github.com/wfpaisa/plane-llamacpp#readme",
     "sideEffects": false,
     "scripts": {
         "build": "tsc",

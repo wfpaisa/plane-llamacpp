@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.plane-llamacpp" path="/org/gnome/shell/extensions/plane-llamacpp/">
+
+    <key name="menuoptions-setting" type="i">
+      <default>0</default>
+      <summary>Menu Type to display in the top bar</summary>
+      <description>0 = Default ("Commands" text); 1 = Text; 2 = Icon</description>
+    </key>
+
+    <key name="menutitle-setting" type="s">
+      <default>'Commands'</default>
+      <summary>Menu text to display if Text is selected for Menu Type</summary>
+    </key>
+
+    <key name="menuicon-setting" type="s">
+      <default>'utilities-terminal-symbolic'</default>
+      <summary>Menu icon to display if Icon is selected for Menu Type</summary>
+    </key>
+
+    <key name="menulocation-setting" type="i">
+      <default>0</default>
+      <summary>Location of the menu in the top bar</summary>
+      <description>0 = Default; 1 = Left; 2 = Right</description>
+    </key>
+
+    <key name="menuposition-setting" type="i">
+      <default>0</default>
+      <summary>Order position of the menu in the top bar</summary>
+      <description>Value between 0 and 20</description>
+    </key>
+
+    <key name="refresh-enabled-setting" type="b">
+      <default>true</default>
+    </key>
+
+    <key type="ai" name="command-order">
+      <default>[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]</default>
+      <summary>Order of commands</summary>
+    </key>
+
+    <key name="command1" type="(sssb)">
+      <default>('Hello world!', 'notify-send "Plane Llamacpp" "Hello world!"', 'face-smile-symbolic', true)</default>
+    </key>
+
+    <key name="command2" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command3" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command4" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command5" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command6" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command7" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command8" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command9" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command10" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command11" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command12" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command13" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command14" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command15" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command16" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command17" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command18" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command19" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command20" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command21" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command22" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command23" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command24" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command25" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command26" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command27" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command28" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command29" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command30" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command31" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command32" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command33" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command34" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command35" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command36" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command37" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command38" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command39" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command40" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command41" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command42" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command43" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command44" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command45" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command46" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command47" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command48" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command49" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command50" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command51" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command52" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command53" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command54" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command55" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command56" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command57" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command58" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command59" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command60" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command61" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command62" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command63" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command64" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command65" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command66" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command67" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command68" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command69" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command70" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command71" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command72" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command73" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command74" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command75" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command76" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command77" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command78" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command79" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command80" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command81" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command82" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command83" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command84" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command85" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command86" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command87" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command88" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command89" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command90" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command91" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command92" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command93" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command94" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command95" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command96" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command97" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command98" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+    <key name="command99" type="(sssb)">
+      <default>("", "", "", true)</default>
+    </key>
+
+  </schema>
+</schemalist>
