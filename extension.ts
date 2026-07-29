@@ -42,6 +42,7 @@ const numberOfCommands = 99;
 type CommandTuple = [string, string, string, boolean];
 
 const CommandMenu = GObject.registerClass(
+    {GTypeName: 'PlaneLlamacppCommandMenu'},
     class CommandMenu extends PanelMenu.Button {
         _pendingCancellables!: Gio.Cancellable[];
         _label!: St.Label | St.Icon;
@@ -453,14 +454,14 @@ export default class PlaneLlamacppExtension extends Extension {
         const pos = settings.get_int('menuposition-setting');
         if (settings.get_int('menulocation-setting') === 0) {
             Main.panel.addToStatusArea(
-                'command-menu',
+                this.uuid,
                 this._indicator,
                 Main.sessionMode.panel.left.length,
                 'left'
             );
         } else {
             Main.panel.addToStatusArea(
-                'command-menu',
+                this.uuid,
                 this._indicator,
                 pos,
                 location
