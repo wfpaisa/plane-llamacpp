@@ -8,13 +8,14 @@ ZIP := $(shell command -v zip 2>/dev/null)
 
 all: dist/extension.js
 
-node_modules/.modules.yaml: package.json
-	pnpm install
+node_modules/.bun-install: package.json
+	bun install
+	@touch node_modules/.bun-install
 
 TS_SOURCES := extension.ts serverManager.ts prefs.ts commandsUI.ts ambient.d.ts
 
-dist/extension.js dist/prefs.js: node_modules/.modules.yaml $(TS_SOURCES)
-	pnpm run build
+dist/extension.js dist/prefs.js: node_modules/.bun-install $(TS_SOURCES)
+	bun run build
 
 schemas/gschemas.compiled: schemas/org.gnome.shell.extensions.$(NAME).gschema.xml
 	glib-compile-schemas schemas

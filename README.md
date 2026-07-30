@@ -38,7 +38,7 @@ plane-llamacpp/
 ├── stylesheet.css  # Custom styling
 ├── tsconfig.json   # tsc config (NodeNext, outDir: dist)
 ├── Makefile        # build / pack / install targets
-└── package.json    # pnpm scripts and dependencies
+└── package.json    # bun scripts and dependencies
 ```
 
 GNOME Shell loads `extension.js` and `prefs.js` from the extension root; `tsc`
@@ -47,7 +47,7 @@ compiles the root `.ts` files straight into `dist/` with matching names.
 ## Requirements
 
 - GNOME Shell 50
-- Node.js + [pnpm](https://pnpm.io)
+- [Bun](https://bun.sh)
 - `tsc` (provided via `typescript` devDependency)
 - `glib-compile-schemas`, `zip`, `gnome-extensions` (provided by your distro)
     - Arch: `sudo pacman -S glib2 zip gnome-shell`
@@ -57,7 +57,7 @@ compiles the root `.ts` files straight into `dist/` with matching names.
 ## Install dependencies
 
 ```bash
-pnpm install
+bun install
 ```
 
 ## Build
@@ -65,10 +65,10 @@ pnpm install
 Compile the TypeScript sources into `dist/`:
 
 ```bash
-pnpm run setup
+bun run setup
 
 # ts -> js
-pnpm run build
+bun run build
 # or
 make
 ```

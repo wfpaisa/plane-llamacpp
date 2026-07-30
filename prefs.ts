@@ -31,7 +31,7 @@ import {
     ExtensionPreferences,
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import commandsUI from './commandsUI.js';
+import commandsUI, {extractModelName} from './commandsUI.js';
 
 const numberOfCommands = 99;
 const fileName = 'commands.ini';
@@ -88,13 +88,21 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
                 // Only export commands that are not blank
                 if (name !== '' || command !== '' || icon !== '') {
                     commandNumber++;
-                    keyFile.set_string(`Command ${commandNumber}`, 'Name', name);
+                    keyFile.set_string(
+                        `Command ${commandNumber}`,
+                        'Name',
+                        name
+                    );
                     keyFile.set_string(
                         `Command ${commandNumber}`,
                         'Command',
                         command
                     );
-                    keyFile.set_string(`Command ${commandNumber}`, 'Icon', icon);
+                    keyFile.set_string(
+                        `Command ${commandNumber}`,
+                        'Icon',
+                        icon
+                    );
                     keyFile.set_boolean(
                         `Command ${commandNumber}`,
                         'Visible',
@@ -311,6 +319,258 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
             }
         });
 
+        // Import from Plane Llama Bench
+        const defaultBenchPath = GLib.build_filenamev([
+            GLib.get_home_dir(),
+            '.config',
+            'plane-llama-bench',
+            'history.json',
+        ]);
+        // Seed the stored path with the default so it is visible and editable.
+        if (settings.get_string('bench-history-path').trim() === '') {
+            settings.set_string('bench-history-path', defaultBenchPath);
+        }
+
+        const benchPathRow = new Adw.EntryRow({
+            title: _('Plane Llama Bench History Path'),
+        });
+        settings.bind(
+            'bench-history-path',
+            benchPathRow,
+            'text',
+            Gio.SettingsBindFlags.DEFAULT
+        );
+
+        const benchFavoritesRow = new Adw.SwitchRow({
+            title: _('Import Favorites Only'),
+            subtitle: _(
+                'Only import entries marked as favorite in Plane Llama Bench'
+            ),
+        });
+        settings.bind(
+            'bench-favorites-only',
+            benchFavoritesRow,
+            'active',
+            Gio.SettingsBindFlags.DEFAULT
+        );
+
+        const benchImportRow = new Adw.ActionRow({
+            title: _('Import from Plane Llama Bench'),
+            subtitle: _(
+                'Add the launch scripts stored in history.json as commands'
+            ),
+            activatable: true,
+        });
+        benchImportRow.add_prefix(
+            new Gtk.Image({
+                gicon: new Gio.FileIcon({
+                    file: Gio.File.new_for_path(
+                        GLib.build_filenamev([
+                            this.path,
+                            'data',
+                            'icons',
+                            'document-send-symbolic.svg',
+                        ])
+                    ),
+                }),
+            })
+        );
+
+        /** Show an error toast with a details dialog. */
+        const showBenchError = (heading: string, body: string) => {
+            const toast = Adw.Toast.new(heading);
+            toast.set_timeout(3);
+            toast.set_button_label(_('Details'));
+            toast.connect('button-clicked', () => {
+                const errorDialog = new Adw.MessageDialog({
+                    transient_for: window,
+                    modal: true,
+                    heading,
+                    body,
+                });
+                errorDialog.add_response('ok', _('OK'));
+                errorDialog.connect('response', () => errorDialog.destroy());
+                errorDialog.show();
+            });
+            window.add_toast(toast);
+        };
+
+        /** Derive a readable command name from a bench config's model flags,
+         * following the same `-hf`/`-m` naming pattern used when extracting
+         * a name from a command script in the command editor. */
+        const deriveBenchName = (
+            config: {model?: unknown; argv?: unknown},
+            script: string
+        ): string => {
+            const fromScript = extractModelName(script);
+            if (fromScript) return fromScript;
+
+            let model =
+                typeof config.model === 'string' ? config.model.trim() : '';
+            if (model === '' && Array.isArray(config.argv)) {
+                const flags = ['-m', '--model', '--mode', '-hf', '--hf-repo'];
+                const argv = config.argv as unknown[];
+                for (let i = 0; i < argv.length - 1; i++) {
+                    if (
+                        typeof argv[i] === 'string' &&
+                        flags.includes(argv[i] as string) &&
+                        typeof argv[i + 1] === 'string'
+                    ) {
+                        model = (argv[i + 1] as string).trim();
+                        break;
+                    }
+                }
+            }
+            if (model === '') return _('Imported command');
+            // Basename works for both file paths and HuggingFace repos.
+            const base = model.split('/').pop() ?? model;
+            return base.replace(/\.gguf$/i, '');
+        };
+
+        benchImportRow.connect('activated', () => {
+            const benchPath =
+                settings.get_string('bench-history-path').trim() ||
+                defaultBenchPath;
+            const favoritesOnly = settings.get_boolean('bench-favorites-only');
+
+            if (!GLib.file_test(benchPath, GLib.FileTest.EXISTS)) {
+                showBenchError(
+                    _('File Not Found'),
+                    _(
+                        'The Plane Llama Bench history file could not be found. Verify the following file exists:\n\n%s'
+                    ).format(benchPath)
+                );
+                return;
+            }
+
+            let data: unknown;
+            try {
+                const [ok, contents] = GLib.file_get_contents(benchPath);
+                if (!ok) throw new Error('Could not read file contents');
+                const text = new TextDecoder().decode(contents);
+                data = JSON.parse(text);
+            } catch (e) {
+                console.log(
+                    '[Plane Llamacpp] Failed to read bench history\n%s'.format(
+                        `${e}`
+                    )
+                );
+                showBenchError(
+                    _('Import Error'),
+                    _('Failed to read Plane Llama Bench history\n\n%s').format(
+                        `${e}`
+                    )
+                );
+                return;
+            }
+
+            if (!Array.isArray(data)) {
+                showBenchError(
+                    _('Import Error'),
+                    _('The Plane Llama Bench history file is not a valid list.')
+                );
+                return;
+            }
+
+            // Collect unique scripts (deduped) from the history entries.
+            const seen = new Set<string>();
+            const candidates: {name: string; script: string}[] = [];
+            for (const entry of data as Array<Record<string, unknown>>) {
+                if (!entry || typeof entry !== 'object') continue;
+                if (favoritesOnly && entry.favorite !== true) continue;
+                const config = entry.config as
+                    | {script?: unknown; model?: unknown; argv?: unknown}
+                    | undefined;
+                if (!config || typeof config !== 'object') continue;
+                const script =
+                    typeof config.script === 'string'
+                        ? config.script.trim()
+                        : '';
+                if (script === '' || seen.has(script)) continue;
+                seen.add(script);
+                candidates.push({
+                    name: deriveBenchName(config, script),
+                    script,
+                });
+            }
+
+            if (candidates.length === 0) {
+                window.add_toast(
+                    Adw.Toast.new(
+                        favoritesOnly
+                            ? _('No favorite entries found to import')
+                            : _('No entries found to import')
+                    )
+                );
+                return;
+            }
+
+            // Skip scripts already present as a command.
+            const existingScripts = new Set<string>();
+            for (let i = 1; i <= numberOfCommands; i++) {
+                const [, command] = settings
+                    .get_value(`command${i}`)
+                    .deep_unpack() as CommandTuple;
+                if (command.trim() !== '') existingScripts.add(command.trim());
+            }
+            const toAdd = candidates.filter(
+                c => !existingScripts.has(c.script)
+            );
+
+            // Place new entries into the first empty slots, keeping menu order.
+            const orderArray = settings
+                .get_value('command-order')
+                .deep_unpack() as number[];
+            let added = 0;
+            let idx = 0;
+            for (const slot of orderArray) {
+                if (idx >= toAdd.length) break;
+                if (slot < 1 || slot > numberOfCommands) continue;
+                const [name, command, icon] = settings
+                    .get_value(`command${slot}`)
+                    .deep_unpack() as CommandTuple;
+                if (name !== '' || command !== '' || icon !== '') continue;
+                const item = toAdd[idx++];
+                settings.set_value(
+                    `command${slot}`,
+                    new GLib.Variant('(sssb)', [
+                        item.name,
+                        item.script,
+                        'utilities-terminal-symbolic',
+                        true,
+                    ])
+                );
+                added++;
+            }
+
+            page.refreshCommandList();
+            page._refreshMenuTitles();
+
+            const skippedExisting = candidates.length - toAdd.length;
+            const noRoom = toAdd.length - added;
+            let message =
+                added === 1
+                    ? _('Imported 1 command from Plane Llama Bench')
+                    : _('Imported %d commands from Plane Llama Bench').format(
+                          added
+                      );
+            if (skippedExisting > 0)
+                message +=
+                    ' ' + _('(%d already existed)').format(skippedExisting);
+            if (noRoom > 0)
+                message +=
+                    ' ' + _('(%d skipped, no free slots)').format(noRoom);
+            const toast = Adw.Toast.new(message);
+            toast.set_timeout(4);
+            window.add_toast(toast);
+            console.log(
+                '[Plane Llamacpp] Imported %d commands from %s'.format(
+                    added,
+                    benchPath
+                )
+            );
+        });
+
         // Setup Information
         const configGroup1 = new Adw.PreferencesGroup({
             title: _('Setup Information'),
@@ -336,7 +596,9 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
 
         const aboutRow1 = new Adw.ActionRow({
             title: _('Homepage'),
-            subtitle: _('GitHub page for additional information and bug reporting'),
+            subtitle: _(
+                'GitHub page for additional information and bug reporting'
+            ),
             activatable: true,
         });
         aboutRow1.connect('activated', () => {
@@ -403,8 +665,9 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
                             settings.reset(key);
                         }
                         page.refreshCommandList();
-                        menuPositionSpinRow.value =
-                            settings.get_int('menuposition-setting');
+                        menuPositionSpinRow.value = settings.get_int(
+                            'menuposition-setting'
+                        );
                         window.add_toast(
                             Adw.Toast.new(_('All settings reset to defaults'))
                         );
@@ -426,6 +689,9 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
         page2.add(backupGroup1);
         backupGroup1.add(exportRow);
         backupGroup1.add(importRow);
+        backupGroup1.add(benchPathRow);
+        backupGroup1.add(benchFavoritesRow);
+        backupGroup1.add(benchImportRow);
 
         page2.add(settingsGroup1);
         settingsGroup1.add(menuPositionSpinRow);
@@ -485,7 +751,10 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
 
         const content = window.get_content();
         const header = content
-            ? (this.findWidgetByType(content, Adw.HeaderBar) as Adw.HeaderBar | null)
+            ? (this.findWidgetByType(
+                  content,
+                  Adw.HeaderBar
+              ) as Adw.HeaderBar | null)
             : null;
         if (header) {
             header.pack_end(button);

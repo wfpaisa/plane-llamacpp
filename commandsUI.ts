@@ -52,6 +52,58 @@ function getBufferText(buffer: Gtk.TextBuffer): string {
     );
 }
 
+/** Matches a parameter-size marker like `12B`, `27B` or `1.5M` in a
+ * hyphen-separated model slug — the point from which segments switch from
+ * hyphenated (kept as part of the model name) to space-separated + upper-cased. */
+const SIZE_SEGMENT_RE = /^\d+(?:\.\d+)?[bm]$/i;
+
+/** Turn a hyphen-separated model slug into a human-friendly name: segments
+ * before the size marker stay hyphenated (e.g. `unsloth/gemma-4`), segments
+ * from the size marker onward are joined with spaces and upper-cased
+ * (e.g. `12B IT QAT`). */
+function humanizeModelSegments(text: string): string {
+    const parts = text.split('-');
+    const sizeIndex = parts.findIndex(p => SIZE_SEGMENT_RE.test(p));
+    if (sizeIndex === -1) return text.replace(/-/g, ' ');
+
+    const prefix = parts.slice(0, sizeIndex).join('-');
+    const rest = parts
+        .slice(sizeIndex)
+        .map(p => p.toUpperCase())
+        .join(' ');
+    return prefix ? `${prefix} ${rest}` : rest;
+}
+
+/** Extract a human-friendly model name from a llama-server invocation using
+ * `-hf`/`--hf-repo org/repo[-GGUF][:quant]` or `-m`/`--model /path/to/file.gguf`.
+ * Returns '' if neither flag is present. */
+export function extractModelName(command: string): string {
+    const tokens = command
+        .replace(/\\\s*\n/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+    const hfIndex = tokens.findIndex(t => t === '-hf' || t === '--hf-repo');
+    if (hfIndex !== -1 && tokens[hfIndex + 1]) {
+        const [repoPart, quantPart] = tokens[hfIndex + 1].split(':');
+        const name = humanizeModelSegments(repoPart.replace(/-GGUF$/i, ''));
+        // The repo name itself often already ends with the quant tag
+        // (e.g. `...-Q8_0-GGUF:Q8_0`) — don't repeat it in that case.
+        if (!quantPart) return name;
+        return name.toUpperCase().endsWith(quantPart.toUpperCase())
+            ? name
+            : `${name} ${quantPart}`;
+    }
+
+    const mIndex = tokens.findIndex(t => t === '-m' || t === '--model');
+    if (mIndex !== -1 && tokens[mIndex + 1]) {
+        const base = tokens[mIndex + 1].split('/').pop() ?? '';
+        return humanizeModelSegments(base.replace(/\.gguf$/i, ''));
+    }
+
+    return '';
+}
+
 let draggedRow: CommandRow | null = null;
 
 export default class commandsUI extends Adw.PreferencesPage {
@@ -103,8 +155,42 @@ export default class commandsUI extends Adw.PreferencesPage {
         this._overlay = new Adw.ToastOverlay();
         this._overlay.set_child(clamp);
 
+        const deleteAllButton = new Gtk.Button({
+            child: new Adw.ButtonContent({
+                icon_name: 'user-trash-symbolic',
+                label: _('Eliminar todos'),
+            }),
+            halign: Gtk.Align.CENTER,
+            margin_top: 12,
+            tooltip_text: _('Eliminar todos los comandos'),
+            css_classes: ['destructive-action'],
+        });
+        deleteAllButton.connect('clicked', () => {
+            const dialog = new Adw.MessageDialog({
+                transient_for: this.get_root() as Gtk.Window,
+                heading: _('¿Eliminar todos los comandos?'),
+                body: _(
+                    'Se eliminarán todos los comandos de la lista. Esta acción no se puede deshacer.'
+                ),
+                default_response: 'cancel',
+                close_response: 'cancel',
+            });
+            dialog.add_response('cancel', _('Cancelar'));
+            dialog.add_response('delete', _('Eliminar todos'));
+            dialog.set_response_appearance(
+                'delete',
+                Adw.ResponseAppearance.DESTRUCTIVE
+            );
+            dialog.connect('response', (dlg, response) => {
+                if (response === 'delete') this._deleteAllCommands();
+                dlg.destroy();
+            });
+            dialog.show();
+        });
+
         const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL});
         box.append(this._overlay);
+        box.append(deleteAllButton);
 
         const group = new Adw.PreferencesGroup();
         group.add(box);
@@ -136,10 +222,11 @@ export default class commandsUI extends Adw.PreferencesPage {
             right_margin: 6,
         });
         const commandBuffer = commandView.get_buffer();
+        // Text area, textarea, caja de texto, script
         const commandScroller = new Gtk.ScrolledWindow({
             hscrollbar_policy: Gtk.PolicyType.NEVER,
             vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
-            min_content_height: 96,
+            min_content_height: 320,
         });
         commandScroller.set_child(commandView);
         const commandFrame = new Gtk.Frame({child: commandScroller});
@@ -158,6 +245,19 @@ export default class commandsUI extends Adw.PreferencesPage {
         });
         commandBox.append(commandLabel);
         commandBox.append(commandFrame);
+
+        const extractNameButton = new Gtk.Button({
+            icon_name: 'view-refresh-symbolic',
+            has_frame: false,
+            valign: Gtk.Align.CENTER,
+            tooltip_text: _('Extraer nombre desde el comando (-hf/-m)'),
+        });
+        extractNameButton.connect('clicked', () => {
+            const extracted = extractModelName(getBufferText(commandBuffer));
+            if (extracted) entryRowName.text = extracted;
+            else this._showToast(_('No se encontró -hf ni -m en el comando'));
+        });
+        entryRowName.add_prefix(extractNameButton);
 
         row.add_row(entryRowName);
         row.add_row(commandBox);
@@ -202,9 +302,9 @@ export default class commandsUI extends Adw.PreferencesPage {
                     crow._commandBuffer.set_text('', -1);
                     crow.title = '';
 
-                    (crow._checkButton.get_child() as Gtk.Image).set_from_icon_name(
-                        'checkbox-checked-symbolic'
-                    );
+                    (
+                        crow._checkButton.get_child() as Gtk.Image
+                    ).set_from_icon_name('checkbox-checked-symbolic');
                     crow.remove_css_class('dim-label');
 
                     this._commandBoxList.remove(crow);
@@ -247,16 +347,21 @@ export default class commandsUI extends Adw.PreferencesPage {
 
                     this._settings.set_value(
                         `command${crow._rowNumber}`,
-                        new GLib.Variant('(sssb)', [newName, dCommand, '', true])
+                        new GLib.Variant('(sssb)', [
+                            newName,
+                            dCommand,
+                            '',
+                            true,
+                        ])
                     );
 
                     crow._entryRowName.text = newName;
                     crow._commandBuffer.set_text(dCommand, -1);
                     crow.title = newName.replace(/&/g, '&amp;');
 
-                    (crow._checkButton.get_child() as Gtk.Image).set_from_icon_name(
-                        'checkbox-checked-symbolic'
-                    );
+                    (
+                        crow._checkButton.get_child() as Gtk.Image
+                    ).set_from_icon_name('checkbox-checked-symbolic');
                     crow.remove_css_class('dim-label');
 
                     this._commandBoxList.remove(crow);
@@ -326,7 +431,9 @@ export default class commandsUI extends Adw.PreferencesPage {
 
         // (checkbox)
         const checkButtonIcon = (
-            this._settings.get_value(`command${rowNumber}`).deep_unpack() as CommandTuple
+            this._settings
+                .get_value(`command${rowNumber}`)
+                .deep_unpack() as CommandTuple
         )[3]
             ? 'checkbox-checked-symbolic'
             : 'checkbox-symbolic';
@@ -464,10 +571,7 @@ export default class commandsUI extends Adw.PreferencesPage {
         dropController.connect('leave', () => dragBox.drag_unhighlight_row());
         dragBox.insert(row, index);
 
-        if (
-            entryRowName.text === '' &&
-            getBufferText(commandBuffer) === ''
-        ) {
+        if (entryRowName.text === '' && getBufferText(commandBuffer) === '') {
             row.visible = false;
         }
     }
@@ -493,9 +597,15 @@ export default class commandsUI extends Adw.PreferencesPage {
             );
         }
 
-        if (!Array.isArray(savedOrder) || savedOrder.length !== numberOfCommands) {
+        if (
+            !Array.isArray(savedOrder) ||
+            savedOrder.length !== numberOfCommands
+        ) {
             console.log('[Plane Llamacpp] Invalid savedOrder array');
-            savedOrder = Array.from({length: numberOfCommands}, (_v, i) => i + 1);
+            savedOrder = Array.from(
+                {length: numberOfCommands},
+                (_v, i) => i + 1
+            );
         }
 
         for (let i = 0; i < savedOrder.length; i++) {
@@ -537,9 +647,9 @@ export default class commandsUI extends Adw.PreferencesPage {
                         new GLib.Variant('(sssb)', ['', '', '', true])
                     );
 
-                    (crow._checkButton.get_child() as Gtk.Image).set_from_icon_name(
-                        'checkbox-checked-symbolic'
-                    );
+                    (
+                        crow._checkButton.get_child() as Gtk.Image
+                    ).set_from_icon_name('checkbox-checked-symbolic');
                     crow.remove_css_class('dim-label');
 
                     this._commandBoxList.remove(crow);
@@ -653,7 +763,10 @@ export default class commandsUI extends Adw.PreferencesPage {
             if (child !== this._addCommandButton && crow._rowNumber)
                 order.push(crow._rowNumber);
         }
-        this._settings.set_value('command-order', new GLib.Variant('ai', order));
+        this._settings.set_value(
+            'command-order',
+            new GLib.Variant('ai', order)
+        );
     }
 
     _getListBoxRows(listBox: Gtk.ListBox): Gtk.Widget[] {
@@ -664,6 +777,25 @@ export default class commandsUI extends Adw.PreferencesPage {
             row = row.get_next_sibling();
         }
         return rows;
+    }
+
+    /** Clear every command slot and reset the order, then rebuild the list. */
+    _deleteAllCommands() {
+        for (let i = 1; i <= numberOfCommands; i++) {
+            this._settings.set_value(
+                `command${i}`,
+                new GLib.Variant('(sssb)', ['', '', '', true])
+            );
+        }
+        this._settings.set_value(
+            'command-order',
+            new GLib.Variant(
+                'ai',
+                Array.from({length: numberOfCommands}, (_v, i) => i + 1)
+            )
+        );
+        this.refreshCommandList();
+        this._showToast(_('Se eliminaron todos los comandos'));
     }
 
     refreshCommandList() {
@@ -684,7 +816,10 @@ export default class commandsUI extends Adw.PreferencesPage {
                 .deep_unpack() as number[];
         } catch (e) {
             console.log('Failed to read command-order from settings:', e);
-            savedOrder = Array.from({length: numberOfCommands}, (_v, i) => i + 1);
+            savedOrder = Array.from(
+                {length: numberOfCommands},
+                (_v, i) => i + 1
+            );
         }
 
         for (let i = 0; i < savedOrder.length; i++) {
