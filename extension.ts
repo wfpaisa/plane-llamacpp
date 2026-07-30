@@ -1,9 +1,11 @@
 /* extension.ts
  *
- * Panel menu of the Plane Llamacpp GNOME Shell extension: builds a configurable
- * drop-down of user commands (with separators, submenus and dynamic labels) in
- * the top bar. Ported to TypeScript from the Custom Command Menu extension
- * (https://github.com/StorageB/custom-command-menu).
+ * Panel indicator of the Plane Llamacpp GNOME Shell extension: shows the
+ * llama.cpp icon in the top bar (its background turns yellow while a server is
+ * starting and green while at least one is running) and a drop-down listing the
+ * configured server scripts. Each entry starts/stops its `llama-server` command
+ * and shows a per-script status icon. Start/stop/error notifications are posted
+ * to the message tray. Process handling lives in serverManager.ts.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,174 +34,190 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import * as OverviewControls from 'resource:///org/gnome/shell/ui/overviewControls.js';
+
+import {ServerManager, ServerState} from './serverManager.js';
 
 const numberOfCommands = 99;
 
 /** Tuple stored in each `commandN` GSettings key: (name, command, icon, visible). */
 type CommandTuple = [string, string, string, boolean];
 
-const CommandMenu = GObject.registerClass(
-    {GTypeName: 'PlaneLlamacppCommandMenu'},
-    class CommandMenu extends PanelMenu.Button {
-        _pendingCancellables!: Gio.Cancellable[];
-        _label!: St.Label | St.Icon;
+/** Theme icon name used for the per-script status icon while starting. */
+const STARTING_ICON_NAME = 'content-loading-symbolic';
+
+/** CSS class carrying the color for each server state. */
+const STATE_CLASS: Record<ServerState, string> = {
+    stopped: 'llamacpp-status-stopped',
+    starting: 'llamacpp-status-starting',
+    running: 'llamacpp-status-running',
+};
+
+/** Panel icons shown for the aggregated state (see `setPanelState`). */
+interface PanelIcons {
+    /** Normal llama.cpp glyph, shown at rest and while any server is running. */
+    normal: Gio.Icon;
+    /** "Loading" glyph shown while a server is starting up. */
+    starting: Gio.Icon;
+}
+
+/**
+ * Per-script status icons, named after the action a click would perform
+ * rather than the current state: a stopped script shows "play" (click to
+ * start it), a running one shows "stop" (click to stop it).
+ */
+interface MenuIcons {
+    stopped: Gio.Icon;
+    running: Gio.Icon;
+    /** Icon for the bottom "Settings" menu entry. */
+    settings: Gio.Icon;
+}
+
+/** Minimum opacity of the panel button at the dim end of the blink. */
+const BLINK_DIM_OPACITY = 90;
+/**
+ * Duration (ms) of each blink phase; a full dim-to-bright cycle takes twice
+ * this. St has no @keyframes, so the blink is driven with chained Clutter
+ * transitions instead (same approach as plane-tts/extension.js).
+ */
+const BLINK_PHASE_MS = 1000;
+
+/** Options the extension passes to the indicator when (re)building the menu. */
+interface BuildOptions {
+    getState: (index: number) => ServerState;
+    onActivate: (index: number, name: string, command: string) => void;
+    onOpenPrefs: () => void;
+}
+
+const LlamacppIndicator = GObject.registerClass(
+    {GTypeName: 'PlaneLlamacppIndicator'},
+    class LlamacppIndicator extends PanelMenu.Button {
+        _icon!: St.Icon;
+        _icons!: PanelIcons;
+        _menuIcons!: MenuIcons;
+        _blinking = false;
+        /** Per-script menu widgets keyed by command index. */
+        _items!: Map<number, {icon: St.Icon}>;
 
         _init() {
-            super._init(0.5, _('Commands'));
-            this._pendingCancellables = [];
+            super._init(0.5, _('Plane Llamacpp'));
+            this._items = new Map();
         }
 
-        /** Build the panel label and the drop-down menu from GSettings. */
-        build(settings: Gio.Settings) {
-            let labelText;
+        /** Create the panel icon (custom SVG) as a direct child of the button. */
+        setup(icons: PanelIcons, menuIcons: MenuIcons) {
+            this._icons = icons;
+            this._menuIcons = menuIcons;
+            this._icon = new St.Icon({
+                gicon: icons.normal,
+                style_class: 'system-status-icon',
+                icon_size: 16,
+            });
+            this.add_child(this._icon);
+        }
 
-            if (settings.get_int('menuoptions-setting') === 2) {
-                labelText = settings.get_string('menuicon-setting');
-                this._label = new St.Icon({
-                    icon_name: labelText.trim(),
-                    style_class: 'system-status-icon',
-                });
-                this.add_child(this._label);
-            } else if (settings.get_int('menuoptions-setting') === 1) {
-                labelText = settings.get_string('menutitle-setting');
-                this._label = new St.Label({
-                    text: labelText,
-                    y_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                this.add_child(this._label);
-            } else {
-                labelText = _('Commands');
-                this._label = new St.Label({
-                    text: labelText,
-                    y_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                this.add_child(this._label);
-            }
+        /** Apply the right glyph for `state` to a per-script status icon. */
+        _applyItemIcon(icon: St.Icon, state: ServerState) {
+            if (state === 'starting') icon.icon_name = STARTING_ICON_NAME;
+            else icon.gicon = this._menuIcons[state];
+        }
 
+        /**
+         * Build the drop-down: one entry per visible, named script, plus the
+         * separator (`---`/`~~~`/`───`) and submenu (`*`) markers ported from
+         * the Custom Command Menu extension. A name that is exactly a separator
+         * prefix inserts a divider; a prefix followed by text inserts a labeled
+         * divider; a name starting with `*` places the entry inside a submenu
+         * whose title comes from the (non-`*`) row above the group.
+         */
+        build(settings: Gio.Settings, opts: BuildOptions) {
+            this._items.clear();
             const menu = this.menu as PopupMenu.PopupMenu;
+
             const getCmd = (n: number) =>
                 settings.get_value(`command${n}`).deep_unpack() as CommandTuple;
-
-            const commandOrder = settings
+            const order = settings
                 .get_value('command-order')
                 .deep_unpack() as number[];
-            let menuTitle = '';
-            let currentSubMenu: PopupMenu.PopupMenuBase | null = null;
 
-            // 0 - no sub menu; 1 - sub menu detected on next line; 2 - submenu creation in progress
+            const separators = ['~~~', '---', '───'];
+            const isBlank = (t: CommandTuple) => t[0] === '' && t[1] === '';
+
+            let menuTitle = '';
+            let currentSubMenu: PopupMenu.PopupSubMenu | null = null;
+            // 0 = no submenu; 1 = submenu detected on next line; 2 = submenu in progress.
             let subMenuStatus = 0;
 
-            for (const j of commandOrder) {
+            for (const j of order) {
                 if (j < 1 || j > numberOfCommands) continue;
-                if (!getCmd(j)[3]) continue;
+                const tuple = getCmd(j);
+                const [name, command, , visible] = tuple;
+                if (!visible) continue;
+                if (isBlank(tuple)) continue;
 
-                const [entryRowA, entryRowB, entryRowC] = getCmd(j);
-
-                if (entryRowA === '' && entryRowB === '' && entryRowC === '')
-                    continue;
-
-                const currentIndex = commandOrder.indexOf(j);
+                // Look ahead to the next visible, non-blank entry to decide
+                // whether a submenu group is starting here.
+                const currentIndex = order.indexOf(j);
                 let foundNext = false;
-
-                for (let m = currentIndex + 1; m < commandOrder.length; m++) {
-                    const nextId = commandOrder[m];
-
+                for (let m = currentIndex + 1; m < order.length; m++) {
+                    const nextId = order[m];
                     if (nextId < 1 || nextId > numberOfCommands) continue;
-                    if (!getCmd(nextId)[3]) continue;
+                    const nextTuple = getCmd(nextId);
+                    if (!nextTuple[3]) continue;
+                    if (isBlank(nextTuple)) continue;
 
-                    const [nextEntryRowA, nextEntryRowB, nextEntryRowC] =
-                        getCmd(nextId);
-
-                    if (
-                        nextEntryRowA === '' &&
-                        nextEntryRowB === '' &&
-                        nextEntryRowC === ''
-                    )
-                        continue;
-
-                    const nextRow = getCmd(nextId)[0].trim();
-
-                    if (nextRow.startsWith('*')) {
+                    if (nextTuple[0].trim().startsWith('*')) {
                         if (subMenuStatus === 0) subMenuStatus = 1;
                         else if (subMenuStatus === 1) subMenuStatus = 2;
                     } else {
                         subMenuStatus = 0;
                     }
-
                     foundNext = true;
                     break;
                 }
-
                 if (!foundNext) subMenuStatus = 0;
+
                 if (subMenuStatus === 1) {
-                    if (entryRowA.trim().startsWith('*')) {
+                    if (name.trim().startsWith('*')) {
                         menuTitle = '';
                     } else {
-                        menuTitle = entryRowA.trim();
+                        // This row is the title for the submenu that follows.
+                        menuTitle = name.trim();
                         currentSubMenu = null;
                         continue;
                     }
                 }
 
-                const separators = ['~~~', '---', '───'];
-                // menu entry for separator
-                if (separators.some(prefix => entryRowA.trim() === prefix)) {
+                // Plain separator: the whole name is a separator prefix.
+                if (separators.some(p => name.trim() === p)) {
                     menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
                     continue;
                 }
 
-                // menu entry for labeled separator
-                if (
-                    separators.some(
-                        prefix =>
-                            entryRowA.trimStart().startsWith(prefix) &&
-                            entryRowA.trimStart().length > prefix.length
-                    )
-                ) {
-                    const matchingSeparator = separators.find(prefix =>
-                        entryRowA.trimStart().startsWith(prefix)
-                    )!;
-                    const sectionLabel = new PopupMenu.PopupBaseMenuItem({
-                        reactive: false,
-                        style_class: 'section-label-menu-item',
-                    });
-
-                    const sepLabelText = entryRowA
-                        .trimStart()
+                // Labeled separator: a prefix followed by text.
+                const trimmedStart = name.trimStart();
+                const matchingSeparator = separators.find(
+                    p =>
+                        trimmedStart.startsWith(p) &&
+                        trimmedStart.length > p.length
+                );
+                if (matchingSeparator) {
+                    const labelText = trimmedStart
                         .slice(matchingSeparator.length)
                         .trim();
-                    const label = new St.Label({
-                        text: sepLabelText,
-                        style_class: 'popup-subtitle-menu-item',
-                        x_expand: true,
-                        x_align: Clutter.ActorAlign.START,
-                        y_align: Clutter.ActorAlign.CENTER,
-                    });
-
-                    label.set_style(
-                        'font-size: 0.8em; padding: 0em; margin: 0em; line-height: 1em;'
+                    menu.addMenuItem(
+                        matchingSeparator === '───'
+                            ? new PopupMenu.PopupSeparatorMenuItem()
+                            : new PopupMenu.PopupSeparatorMenuItem(labelText)
                     );
-                    this._resolveLabelAsync(label, sepLabelText);
-                    sectionLabel.actor.set_style(
-                        'padding-top: 0px; padding-bottom: 0px; min-height: 0;'
-                    );
-                    sectionLabel.actor.add_child(label);
-
-                    menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                    if (matchingSeparator !== '───')
-                        menu.addMenuItem(sectionLabel);
-
                     continue;
                 }
 
-                const subMenuName = entryRowA.trim();
-                // submenu entry
-                if (subMenuName.startsWith('*')) {
+                // Submenu entry: place it inside the current submenu group.
+                const trimmedName = name.trim();
+                if (trimmedName.startsWith('*')) {
                     if (!currentSubMenu) {
                         const sub = new PopupMenu.PopupSubMenuMenuItem(
                             menuTitle
@@ -207,160 +225,143 @@ const CommandMenu = GObject.registerClass(
                         menu.addMenuItem(sub);
                         currentSubMenu = sub.menu;
                     }
-
-                    const itemLabel = subMenuName.replace(/^\*\s*/, '');
-                    this._addMenuItem(
+                    const itemLabel = trimmedName.replace(/^\*\s*/, '');
+                    this._addServerItem(
+                        j,
                         itemLabel,
-                        entryRowB,
-                        entryRowC.trim(),
+                        command.trim(),
+                        opts,
                         currentSubMenu
                     );
-
                     continue;
                 } else {
                     currentSubMenu = null;
                 }
 
-                // menu entry for command
-                if (entryRowA.trim() !== '') {
-                    this._addMenuItem(entryRowA, entryRowB, entryRowC.trim());
+                if (trimmedName !== '') {
+                    this._addServerItem(j, trimmedName, command.trim(), opts);
                 }
             }
-        }
 
-        destroy() {
-            for (const c of this._pendingCancellables) c.cancel();
-            this._pendingCancellables = [];
-            super.destroy();
-        }
-
-        _resolveLabelAsync(labelWidget: St.Label, text: string) {
-            const pattern = /\$\(([^)]+)\)/g;
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                const fullMatch = match[0];
-                const cmd = match[1];
-                const cancellable = new Gio.Cancellable();
-                this._pendingCancellables.push(cancellable);
-                let timeoutId = GLib.timeout_add_seconds(
-                    GLib.PRIORITY_DEFAULT,
-                    2,
-                    () => {
-                        if (timeoutId > 0) {
-                            cancellable.cancel();
-                            timeoutId = 0;
-                        }
-                        return GLib.SOURCE_REMOVE;
-                    }
+            if (this._items.size === 0) {
+                const empty = new PopupMenu.PopupMenuItem(
+                    _('No scripts configured')
                 );
-                try {
-                    const proc = Gio.Subprocess.new(
-                        ['bash', '-c', cmd],
-                        Gio.SubprocessFlags.STDOUT_PIPE |
-                            Gio.SubprocessFlags.STDERR_SILENCE
-                    );
-                    proc.communicate_utf8_async(
-                        null,
-                        cancellable,
-                        (proc, res) => {
-                            if (timeoutId > 0) {
-                                GLib.Source.remove(timeoutId);
-                                timeoutId = 0;
-                            }
-                            try {
-                                const [, stdout] =
-                                    proc!.communicate_utf8_finish(res);
-                                if (stdout) {
-                                    const current = labelWidget.get_text();
-                                    labelWidget.set_text(
-                                        current.replace(
-                                            fullMatch,
-                                            stdout.trim()
-                                        )
-                                    );
-                                }
-                            } catch (e) {
-                                console.log(
-                                    `[Plane Llamacpp] Error resolving dynamic label: ${cmd}: ${e}`
-                                );
-                            }
-                        }
-                    );
-                } catch (e) {
-                    if (timeoutId > 0) {
-                        GLib.Source.remove(timeoutId);
-                        timeoutId = 0;
-                    }
-                    console.log(
-                        `[Plane Llamacpp] Error spawning command: ${cmd}: ${e}`
-                    );
-                }
+                empty.setSensitive(false);
+                menu.addMenuItem(empty);
             }
+
+            menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            const prefsItem = new PopupMenu.PopupImageMenuItem(
+                _('Settings'),
+                this._menuIcons.settings
+            );
+            prefsItem.connect('activate', () => opts.onOpenPrefs());
+            menu.addMenuItem(prefsItem);
         }
 
-        _addMenuItem(
-            label: string,
+        /**
+         * A server row: name on the left, play/stop status icon flush against
+         * the right edge (same pattern GNOME Shell uses to put a switch at the
+         * end of a PopupSwitchMenuItem row) so the icon lines up across every
+         * row regardless of how long each script's name is.
+         */
+        _addServerItem(
+            index: number,
+            name: string,
             command: string,
-            icon: string,
-            targetMenu: PopupMenu.PopupMenuBase = this.menu as PopupMenu.PopupMenu
+            opts: BuildOptions,
+            targetMenu: PopupMenu.PopupMenuBase = this
+                .menu as PopupMenu.PopupMenu
         ) {
-            const newItem = new PopupMenu.PopupMenuItem('');
-            if (icon) {
-                const commandIcon = new St.Icon({
-                    icon_name: icon,
-                    style_class: 'popup-menu-icon',
-                });
-                newItem.add_child(commandIcon);
-            }
-            const commandLabel = new St.Label({text: label});
-            newItem.add_child(commandLabel);
-            this._resolveLabelAsync(commandLabel, label);
+            const state = opts.getState(index);
+            const item = new PopupMenu.PopupMenuItem(name);
+            item.label.x_expand = true;
 
-            newItem.connect('activate', () => {
-                if (command.trim().toLowerCase() === '##showapplications') {
-                    Main.overview.show(OverviewControls.ControlsState.APP_GRID);
-                    return;
-                }
-
-                // Run associated command when a menu item is clicked
-                console.log(
-                    _('[Plane Llamacpp] Attempting to execute command:\n%s').replace(
-                        '%s',
-                        command
-                    )
-                );
-                const [success] = GLib.spawn_async(
-                    null,
-                    ['/usr/bin/env', 'bash', '-c', command],
-                    null,
-                    GLib.SpawnFlags.SEARCH_PATH,
-                    null
-                );
-                if (!success) {
-                    console.log(
-                        _('[Plane Llamacpp] Error running command:\n%s').replace(
-                            '%s',
-                            command
-                        )
-                    );
-                }
+            const icon = new St.Icon({
+                style_class: `popup-menu-icon ${STATE_CLASS[state]}`,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.END,
             });
-            targetMenu.addMenuItem(newItem);
+            this._applyItemIcon(icon, state);
+            item.add_child(icon);
+
+            item.connect('activate', () =>
+                opts.onActivate(index, name, command)
+            );
+
+            this._items.set(index, {icon});
+            targetMenu.addMenuItem(item);
         }
 
-        updateLabel(text: string) {
-            if (this._label instanceof St.Label) {
-                this._label.text = text;
-            } else if (this._label instanceof St.Icon) {
-                this._label.icon_name = text.trim();
+        /** Update a script's status icon in place (color + glyph). */
+        setItemState(index: number, state: ServerState) {
+            const item = this._items.get(index);
+            if (!item) return;
+            this._applyItemIcon(item.icon, state);
+            for (const cls of Object.values(STATE_CLASS))
+                item.icon.remove_style_class_name(cls);
+            item.icon.add_style_class_name(STATE_CLASS[state]);
+        }
+
+        /**
+         * Paint the whole panel button background from the aggregated state,
+         * swap in the "loading" glyph while starting, and blink the button
+         * only while starting; "running" settles into a solid green so a
+         * server that stays up indefinitely doesn't blink forever.
+         */
+        setPanelState(globalState: 'idle' | 'starting' | 'running') {
+            this.remove_style_class_name('llamacpp-running');
+            this.remove_style_class_name('llamacpp-starting');
+            this._icon.gicon = this._icons.normal;
+
+            if (globalState === 'running') {
+                this.add_style_class_name('llamacpp-running');
+            } else if (globalState === 'starting') {
+                this._icon.gicon = this._icons.starting;
+                this.add_style_class_name('llamacpp-starting');
             }
+
+            if (globalState === 'starting') this._startBlink();
+            else this._stopBlink();
+        }
+
+        /** Start the panel-wide opacity blink (no-op if already running). */
+        _startBlink() {
+            if (this._blinking) return;
+            this._blinking = true;
+            this._pulseBlink(true);
+        }
+
+        /** Stop the blink and snap the button back to full opacity. */
+        _stopBlink() {
+            if (!this._blinking) return;
+            this._blinking = false;
+            this.remove_all_transitions();
+            this.opacity = 255;
+        }
+
+        /** One fade phase of the blink loop; re-arms itself until `_stopBlink()`. */
+        _pulseBlink(dim: boolean) {
+            if (!this._blinking) return;
+            this.ease({
+                opacity: dim ? BLINK_DIM_OPACITY : 255,
+                duration: BLINK_PHASE_MS,
+                mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+                onComplete: () => this._pulseBlink(!dim),
+            });
         }
     }
 );
 
 export default class PlaneLlamacppExtension extends Extension {
     _settings?: Gio.Settings;
-    _indicator?: InstanceType<typeof CommandMenu>;
+    _indicator?: InstanceType<typeof LlamacppIndicator>;
+    _manager?: ServerManager;
+    _gicon?: Gio.Icon;
+    _icons?: PanelIcons;
+    _menuIcons?: MenuIcons;
+    _notifSource: MessageTray.Source | null = null;
     _settingsSignals: number[] = [];
     _commandRefreshTimeout: number | null = null;
 
@@ -368,14 +369,42 @@ export default class PlaneLlamacppExtension extends Extension {
         this._settings = this.getSettings();
         this._settingsSignals = [];
 
+        // Use the `-symbolic` variant so St recolors it to the panel foreground
+        // (visible in both light and dark themes); the state color lives in the
+        // St.Bin background behind it.
+        const iconFile = (name: string) =>
+            new Gio.FileIcon({
+                file: Gio.File.new_for_path(
+                    GLib.build_filenamev([this.path, 'data', 'icons', name])
+                ),
+            });
+        this._gicon = iconFile('llamacpp-symbolic.svg');
+        this._icons = {
+            normal: this._gicon,
+            starting: iconFile('spinner-symbolic.svg'),
+        };
+        this._menuIcons = {
+            stopped: iconFile('play-large-symbolic.svg'),
+            running: iconFile('stop-large-symbolic.svg'),
+            settings: iconFile('settings-symbolic.svg'),
+        };
+
+        this._manager = new ServerManager({
+            onStateChange: (index, state) => {
+                this._indicator?.setItemState(index, state);
+                this._indicator?.setPanelState(this._manager!.getGlobalState());
+            },
+            onNotify: (title, body, isError) =>
+                this._notify(title, body, isError),
+        });
+
         this._placeIndicator();
 
-        // Debounced rebuild whenever any command entry changes.
+        // Debounced menu rebuild whenever any script entry changes.
         for (let k = 1; k <= numberOfCommands; k++) {
             this._settingsSignals.push(
                 this._settings.connect(`changed::command${k}`, () => {
                     if (this._commandRefreshTimeout !== null) return;
-
                     this._commandRefreshTimeout = GLib.timeout_add(
                         GLib.PRIORITY_DEFAULT,
                         300,
@@ -389,84 +418,61 @@ export default class PlaneLlamacppExtension extends Extension {
             );
         }
 
-        // Watch for changes to menu display settings.
-        this._settingsSignals.push(
-            this._settings.connect('changed::menuoptions-setting', () =>
-                this._refreshIndicator()
-            )
-        );
-        this._settingsSignals.push(
-            this._settings.connect('changed::menutitle-setting', () => {
-                const newLabelText =
-                    this._settings!.get_string('menutitle-setting');
-                this._indicator?.updateLabel(newLabelText);
-            })
-        );
-        this._settingsSignals.push(
-            this._settings.connect('changed::menuicon-setting', () =>
-                this._refreshIndicator()
-            )
-        );
-        this._settingsSignals.push(
-            this._settings.connect('changed::command-order', () =>
-                this._refreshIndicator()
-            )
-        );
-        this._settingsSignals.push(
-            this._settings.connect('changed::menulocation-setting', () =>
-                this._refreshIndicator()
-            )
-        );
-        this._settingsSignals.push(
-            this._settings.connect('changed::menuposition-setting', () =>
-                this._refreshIndicator()
-            )
-        );
+        // Order and placement changes rebuild the indicator too.
+        for (const key of ['command-order', 'menuposition-setting']) {
+            this._settingsSignals.push(
+                this._settings.connect(`changed::${key}`, () =>
+                    this._refreshIndicator()
+                )
+            );
+        }
     }
 
     disable() {
-        if (this._settingsSignals.length) {
-            for (const id of this._settingsSignals)
-                this._settings?.disconnect(id);
-            this._settingsSignals = [];
-        }
-
-        if (this._indicator) {
-            this._indicator.destroy();
-            this._indicator = undefined;
-        }
+        for (const id of this._settingsSignals) this._settings?.disconnect(id);
+        this._settingsSignals = [];
 
         if (this._commandRefreshTimeout !== null) {
             GLib.Source.remove(this._commandRefreshTimeout);
             this._commandRefreshTimeout = null;
         }
 
+        this._manager?.destroy();
+        this._manager = undefined;
+
+        if (this._indicator) {
+            this._indicator.destroy();
+            this._indicator = undefined;
+        }
+
+        if (this._notifSource) {
+            this._notifSource.destroy(
+                MessageTray.NotificationDestroyedReason.SOURCE_CLOSED
+            );
+            this._notifSource = null;
+        }
+
+        this._gicon = undefined;
+        this._icons = undefined;
+        this._menuIcons = undefined;
         this._settings = undefined;
     }
 
     _placeIndicator() {
         const settings = this._settings!;
-        this._indicator = new CommandMenu();
-        this._indicator.build(settings);
+        this._indicator = new LlamacppIndicator();
+        this._indicator.setup(this._icons!, this._menuIcons!);
+        this._indicator.build(settings, {
+            getState: index => this._manager!.getState(index),
+            onActivate: (index, name, command) =>
+                this._manager!.toggle(index, name, command),
+            onOpenPrefs: () => this.openPreferences(),
+        });
 
-        const location =
-            settings.get_int('menulocation-setting') === 2 ? 'right' : 'left';
         const pos = settings.get_int('menuposition-setting');
-        if (settings.get_int('menulocation-setting') === 0) {
-            Main.panel.addToStatusArea(
-                this.uuid,
-                this._indicator,
-                Main.sessionMode.panel.left.length,
-                'left'
-            );
-        } else {
-            Main.panel.addToStatusArea(
-                this.uuid,
-                this._indicator,
-                pos,
-                location
-            );
-        }
+        Main.panel.addToStatusArea(this.uuid, this._indicator, pos, 'right');
+
+        this._indicator.setPanelState(this._manager!.getGlobalState());
     }
 
     _refreshIndicator() {
@@ -479,9 +485,31 @@ export default class PlaneLlamacppExtension extends Extension {
             this._indicator = undefined;
         }
         this._placeIndicator();
-        if (this._settings!.get_int('menuoptions-setting') === 2)
-            this._indicator!.updateLabel(
-                this._settings!.get_string('menuicon-setting')
-            );
+    }
+
+    _ensureSource(): MessageTray.Source {
+        if (this._notifSource) return this._notifSource;
+        this._notifSource = new MessageTray.Source({
+            title: _('Plane Llamacpp'),
+            iconName: 'application-x-executable-symbolic',
+        });
+        this._notifSource.connect('destroy', () => (this._notifSource = null));
+        Main.messageTray.add(this._notifSource);
+        return this._notifSource;
+    }
+
+    _notify(title: string, body: string, isError: boolean) {
+        const source = this._ensureSource();
+        const notification = new MessageTray.Notification({
+            source,
+            title,
+            body,
+            gicon: this._gicon,
+            isTransient: !isError,
+            urgency: isError
+                ? MessageTray.Urgency.HIGH
+                : MessageTray.Urgency.NORMAL,
+        });
+        source.addNotification(notification);
     }
 }

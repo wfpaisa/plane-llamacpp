@@ -1,7 +1,7 @@
 /* commandsUI.ts
  *
  * Adwaita preferences page that edits the command list: one expander row per
- * command with name/command/icon entries, a visibility checkbox, per-row
+ * command with name/command entries, a visibility checkbox, per-row
  * insert/duplicate/delete actions and drag-and-drop reordering. Ported to
  * TypeScript from the Custom Command Menu extension
  * (https://github.com/StorageB/custom-command-menu).
@@ -39,10 +39,18 @@ type CommandTuple = [string, string, string, boolean];
 type CommandRow = Adw.ExpanderRow & {
     _rowNumber: number;
     _entryRowName: Adw.EntryRow;
-    _entryRowCommand: Adw.EntryRow;
-    _entryRowIcon: Adw.EntryRow;
+    _commandBuffer: Gtk.TextBuffer;
     _checkButton: Gtk.Button;
 };
+
+/** Read the full text of a multi-line command buffer. */
+function getBufferText(buffer: Gtk.TextBuffer): string {
+    return buffer.get_text(
+        buffer.get_start_iter(),
+        buffer.get_end_iter(),
+        false
+    );
+}
 
 let draggedRow: CommandRow | null = null;
 
@@ -115,23 +123,53 @@ export default class commandsUI extends Adw.PreferencesPage {
         this._expanderRows.push(row);
 
         const entryRowName = new Adw.EntryRow({title: _('Name:')});
-        const entryRowCommand = new Adw.EntryRow({title: _('Command:')});
-        const entryRowIcon = new Adw.EntryRow({title: _('Icon:')});
+
+        // Multi-line command editor: llama-server scripts span several lines with
+        // `\` continuations, which a single-line Adw.EntryRow cannot hold.
+        const commandView = new Gtk.TextView({
+            monospace: true,
+            wrap_mode: Gtk.WrapMode.WORD_CHAR,
+            accepts_tab: false,
+            top_margin: 6,
+            bottom_margin: 6,
+            left_margin: 6,
+            right_margin: 6,
+        });
+        const commandBuffer = commandView.get_buffer();
+        const commandScroller = new Gtk.ScrolledWindow({
+            hscrollbar_policy: Gtk.PolicyType.NEVER,
+            vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+            min_content_height: 96,
+        });
+        commandScroller.set_child(commandView);
+        const commandFrame = new Gtk.Frame({child: commandScroller});
+        const commandLabel = new Gtk.Label({
+            label: _('Command:'),
+            xalign: 0,
+            css_classes: ['dim-label', 'caption'],
+        });
+        const commandBox = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 6,
+            margin_top: 6,
+            margin_bottom: 6,
+            margin_start: 12,
+            margin_end: 12,
+        });
+        commandBox.append(commandLabel);
+        commandBox.append(commandFrame);
 
         row.add_row(entryRowName);
-        row.add_row(entryRowCommand);
-        row.add_row(entryRowIcon);
+        row.add_row(commandBox);
 
         row._entryRowName = entryRowName;
-        row._entryRowCommand = entryRowCommand;
-        row._entryRowIcon = entryRowIcon;
+        row._commandBuffer = commandBuffer;
 
-        const [name, command, icon] = this._settings
+        const [name, command] = this._settings
             .get_value(`command${rowNumber}`)
             .deep_unpack() as CommandTuple;
         entryRowName.text = name;
-        entryRowCommand.text = command;
-        entryRowIcon.text = icon;
+        commandBuffer.set_text(command, -1);
 
         row.title = entryRowName.text.replace(/&/g, '&amp;');
 
@@ -161,8 +199,7 @@ export default class commandsUI extends Adw.PreferencesPage {
                         new GLib.Variant('(sssb)', ['', '', '', true])
                     );
                     crow._entryRowName.text = '';
-                    crow._entryRowCommand.text = '';
-                    crow._entryRowIcon.text = '';
+                    crow._commandBuffer.set_text('', -1);
                     crow.title = '';
 
                     (crow._checkButton.get_child() as Gtk.Image).set_from_icon_name(
@@ -203,24 +240,18 @@ export default class commandsUI extends Adw.PreferencesPage {
             for (const child of this._getListBoxRows(this._commandBoxList)) {
                 if (child instanceof Adw.ExpanderRow && !child.visible) {
                     const crow = child as CommandRow;
-                    const [dName, dCommand, dIcon] = this._settings
+                    const [dName, dCommand] = this._settings
                         .get_value(`command${row._rowNumber}`)
                         .deep_unpack() as CommandTuple;
                     const newName = `${dName} ${_('(copy)')}`;
 
                     this._settings.set_value(
                         `command${crow._rowNumber}`,
-                        new GLib.Variant('(sssb)', [
-                            newName,
-                            dCommand,
-                            dIcon,
-                            true,
-                        ])
+                        new GLib.Variant('(sssb)', [newName, dCommand, '', true])
                     );
 
                     crow._entryRowName.text = newName;
-                    crow._entryRowCommand.text = dCommand;
-                    crow._entryRowIcon.text = dIcon;
+                    crow._commandBuffer.set_text(dCommand, -1);
                     crow.title = newName.replace(/&/g, '&amp;');
 
                     (crow._checkButton.get_child() as Gtk.Image).set_from_icon_name(
@@ -262,8 +293,7 @@ export default class commandsUI extends Adw.PreferencesPage {
             draggedRow = null;
 
             row._entryRowName.text = '';
-            row._entryRowCommand.text = '';
-            row._entryRowIcon.text = '';
+            row._commandBuffer.set_text('', -1);
             row.title = '';
 
             row.visible = false;
@@ -319,7 +349,7 @@ export default class commandsUI extends Adw.PreferencesPage {
                     : 'checkbox-checked-symbolic';
             image.set_from_icon_name(newIcon);
 
-            const [cName, cCommand, cIcon] = this._settings
+            const [cName, cCommand] = this._settings
                 .get_value(`command${rowNumber}`)
                 .deep_unpack() as CommandTuple;
 
@@ -328,7 +358,7 @@ export default class commandsUI extends Adw.PreferencesPage {
                 new GLib.Variant('(sssb)', [
                     cName,
                     cCommand,
-                    cIcon,
+                    '',
                     newIcon === 'checkbox-checked-symbolic',
                 ])
             );
@@ -353,8 +383,8 @@ export default class commandsUI extends Adw.PreferencesPage {
                 `command${rowNumber}`,
                 new GLib.Variant('(sssb)', [
                     entryRowName.text,
-                    entryRowCommand.text,
-                    entryRowIcon.text,
+                    getBufferText(commandBuffer),
+                    '',
                     visible,
                 ])
             );
@@ -365,31 +395,16 @@ export default class commandsUI extends Adw.PreferencesPage {
             });
         });
 
-        entryRowCommand.connect('notify::text', () => {
-            const [name2, , icon2, visible] = this._settings
+        commandBuffer.connect('changed', () => {
+            const [name2, , , visible] = this._settings
                 .get_value(`command${rowNumber}`)
                 .deep_unpack() as CommandTuple;
             this._settings.set_value(
                 `command${rowNumber}`,
                 new GLib.Variant('(sssb)', [
                     name2,
-                    entryRowCommand.text,
-                    icon2,
-                    visible,
-                ])
-            );
-        });
-
-        entryRowIcon.connect('notify::text', () => {
-            const [name2, command2, , visible] = this._settings
-                .get_value(`command${rowNumber}`)
-                .deep_unpack() as CommandTuple;
-            this._settings.set_value(
-                `command${rowNumber}`,
-                new GLib.Variant('(sssb)', [
-                    name2,
-                    command2,
-                    entryRowIcon.text,
+                    getBufferText(commandBuffer),
+                    '',
                     visible,
                 ])
             );
@@ -451,8 +466,7 @@ export default class commandsUI extends Adw.PreferencesPage {
 
         if (
             entryRowName.text === '' &&
-            entryRowCommand.text === '' &&
-            entryRowIcon.text === ''
+            getBufferText(commandBuffer) === ''
         ) {
             row.visible = false;
         }
@@ -692,20 +706,8 @@ export default class commandsUI extends Adw.PreferencesPage {
         const order = this._settings
             .get_value('command-order')
             .deep_unpack() as number[];
-        const separators = ['~~~', '---', '───'];
 
-        function isSeparator(text: string) {
-            if (!text) return false;
-            text = text.trim();
-            return separators.some(
-                prefix =>
-                    text === prefix ||
-                    (text.startsWith(prefix) && text.length > prefix.length)
-            );
-        }
-
-        for (let i = 0; i < order.length; i++) {
-            const n = order[i];
+        for (const n of order) {
             if (n < 1 || n > numberOfCommands) continue;
 
             const row = this._getListBoxRows(this._commandBoxList).find(
@@ -714,72 +716,7 @@ export default class commandsUI extends Adw.PreferencesPage {
             if (!row) continue;
 
             if (row._entryRowName) row._entryRowName.title = _('Name:');
-            if (row._entryRowName) row._entryRowName.show();
-            if (row._entryRowCommand) row._entryRowCommand.show();
-            if (row._entryRowIcon) row._entryRowIcon.show();
-
-            const text = row._entryRowName.text;
-            row.title = text.replace(/&/g, '&amp;');
-
-            if (isSeparator(text)) {
-                row._entryRowCommand.hide();
-                row._entryRowIcon.hide();
-                row._entryRowName.title = _('Separator Row');
-            }
-
-            if (
-                !(
-                    this._settings
-                        .get_value(`command${n}`)
-                        .deep_unpack() as CommandTuple
-                )[3]
-            )
-                continue;
-
-            const [entryA, entryB, entryC] = (
-                this._settings.get_value(`command${n}`).deep_unpack() as CommandTuple
-            )
-                .slice(0, 3)
-                .map(s => (s as string).trim());
-
-            if (entryA === '' && entryB === '' && entryC === '') continue;
-
-            if (!entryA.startsWith('*')) {
-                let nextValid: string | null = null;
-
-                for (let j = i + 1; j < order.length; j++) {
-                    const nextRowNum = order[j];
-
-                    if (nextRowNum < 1 || nextRowNum > numberOfCommands)
-                        continue;
-                    if (
-                        !(
-                            this._settings
-                                .get_value(`command${nextRowNum}`)
-                                .deep_unpack() as CommandTuple
-                        )[3]
-                    )
-                        continue;
-
-                    const [nextA, nextB, nextC] = (
-                        this._settings
-                            .get_value(`command${nextRowNum}`)
-                            .deep_unpack() as CommandTuple
-                    )
-                        .slice(0, 3)
-                        .map(s => (s as string).trim());
-                    if (nextA === '' && nextB === '' && nextC === '') continue;
-
-                    nextValid = nextA;
-                    break;
-                }
-
-                if (nextValid?.startsWith('*')) {
-                    row._entryRowName.title = _('Submenu Title:');
-                    row._entryRowCommand.hide();
-                    row._entryRowIcon.hide();
-                }
-            }
+            row.title = row._entryRowName.text.replace(/&/g, '&amp;');
         }
     }
 

@@ -11,7 +11,7 @@ all: dist/extension.js
 node_modules/.modules.yaml: package.json
 	pnpm install
 
-TS_SOURCES := extension.ts prefs.ts commandsUI.ts about.ts ambient.d.ts
+TS_SOURCES := extension.ts serverManager.ts prefs.ts commandsUI.ts ambient.d.ts
 
 dist/extension.js dist/prefs.js: node_modules/.modules.yaml $(TS_SOURCES)
 	pnpm run build
@@ -25,6 +25,7 @@ ifndef ZIP
 Install it and retry: Arch: sudo pacman -S zip | Debian/Ubuntu: sudo apt install zip | Fedora: sudo dnf install zip)
 endif
 	@cp -r schemas dist/
+	@cp -r data dist/
 	@cp metadata.json dist/
 	@cp stylesheet.css dist/
 	@(cd dist && zip ../$(NAME)@$(DOMAIN).zip -9r .)

@@ -19,7 +19,7 @@
         "build": "tsc",
         "pack": "make pack",
         "install": "make install",
-        "setup": "make all && make pack && make install",
+        "setup": "bun run build && make all && make pack && make install",
         "debug": "dbus-run-session gnome-shell --devkit --wayland",
         "lint": "eslint .",
         "format": "prettier --write ."

@@ -1,1 +1,36 @@
-/* Add your custom extension styling here */
+/* Plane Llamacpp — panel icon and per-script status styling. */
+
+/* State classes are applied to the whole panel button (identical to plane-asr's
+ * .planeasr-recording): a plain background-color fills the button and inherits
+ * the panel button's native rounded corners from the shell theme. */
+
+/* Global state: at least one server running. */
+.llamacpp-running {
+    background-color: #33d17a; /* green */
+}
+
+.llamacpp-running .system-status-icon {
+    color: #ffffff;
+}
+
+/* Global state: a server is starting/mounting. */
+.llamacpp-starting {
+    background-color: #f5c211; /* yellow/amber */
+}
+
+.llamacpp-starting .system-status-icon {
+    color: #ffffff;
+}
+
+/* Per-script status icons (symbolic icons recolored via `color`). */
+.llamacpp-status-stopped {
+    color: #33d17a; /* red */
+}
+
+.llamacpp-status-starting {
+    color: #f5c211; /* yellow */
+}
+
+.llamacpp-status-running {
+    color: #e01b24; /* green */
+}

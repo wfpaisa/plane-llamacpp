@@ -1,9 +1,10 @@
 {
     "name": "Plane Llamacpp",
-    "description": "Create a custom menu in the GNOME top bar to run your favorite commands. Add entries to launch apps, execute shell commands, run scripts, and more through a simple, intuitive interface.",
+    "description": "Manage local llama.cpp servers from the GNOME top bar. Define server scripts, start/stop each one from the menu with a live status indicator, and get start/stop/error notifications.",
     "uuid": "plane-llamacpp@wfelipe.com",
     "url": "https://github.com/wfpaisa/plane-llamacpp",
     "settings-schema": "org.gnome.shell.extensions.plane-llamacpp",
     "shell-version": ["50"],
+    "session-modes": ["user", "unlock-dialog"],
     "version": 1
 }

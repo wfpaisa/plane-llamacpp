@@ -31,7 +31,6 @@ import {
     ExtensionPreferences,
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import {releaseNotes} from './about.js';
 import commandsUI from './commandsUI.js';
 
 const numberOfCommands = 99;
@@ -325,64 +324,15 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
                     '\n' +
                     'Separators\n' +
                     '•  Enter --- or ~~~ in the name field to insert a separator line.\n' +
-                    '•  Add text after --- or ~~~ to create a labeled separator.\n' +
-                    '\n' +
-                    'Submenus\n' +
-                    '•  Start a command name with * to place it in a submenu.\n' +
-                    '•  The submenu title is taken from the row above.'
+                    '•  Add text after --- or ~~~ to create a labeled separator.'
             ),
             activatable: false,
         });
-
-        const configRow2 = new Adw.ActionRow({
-            title: _('Icons'),
-            subtitle: _(
-                'For a list of available icons, refer to the Icon List link below. ' +
-                    'Enter the name of the icon, or leave blank for no icon. ' +
-                    'Refer to the Github Homepage for more icon configuration options.'
-            ),
-            activatable: false,
-        });
-
-        const configRow3 = new Adw.ActionRow({
-            title: _('Icon List'),
-            subtitle: _('List of default symbolic icons'),
-            activatable: true,
-        });
-        configRow3.connect('activated', () => {
-            Gio.app_info_launch_default_for_uri(
-                'https://github.com/StorageB/icons/blob/main/GNOME48Adwaita/icons.md',
-                null
-            );
-        });
-        configRow3.add_prefix(new Gtk.Image({icon_name: 'web-browser-symbolic'}));
-        configRow3.add_suffix(new Gtk.Image({icon_name: 'go-next-symbolic'}));
 
         // About
         const aboutGroup1 = new Adw.PreferencesGroup({
             title: _('About'),
         });
-
-        const aboutRow0 = new Adw.ActionRow({
-            title: _("What's New"),
-            subtitle: _('List of recent changes and improvements'),
-            activatable: true,
-        });
-        aboutRow0.connect('activated', () => {
-            const dialog = new Gtk.MessageDialog({
-                transient_for: window,
-                modal: true,
-                text: _('Release Notes'),
-                secondary_text: releaseNotes,
-                buttons: Gtk.ButtonsType.CLOSE,
-            });
-            dialog.connect('response', () => dialog.destroy());
-            dialog.show();
-        });
-        aboutRow0.add_prefix(
-            new Gtk.Image({icon_name: 'dialog-information-symbolic'})
-        );
-        aboutRow0.add_suffix(new Gtk.Image({icon_name: 'go-next-symbolic'}));
 
         const aboutRow1 = new Adw.ActionRow({
             title: _('Homepage'),
@@ -403,85 +353,6 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
             title: _('Settings'),
         });
 
-        const menuOptionList = new Gtk.StringList();
-        [_('Default'), _('Text'), _('Icon')].forEach(choice =>
-            menuOptionList.append(choice)
-        );
-
-        const menuComboRow = new Adw.ComboRow({
-            title: _('Menu Type'),
-            subtitle: _('Select menu type to be text or an icon'),
-            model: menuOptionList,
-            selected: settings.get_int('menuoptions-setting'),
-        });
-
-        const titleEntryRow = new Adw.EntryRow({
-            title:
-                menuComboRow.selected === 1
-                    ? _('Icon name:')
-                    : menuComboRow.selected === 2
-                      ? _('Menu title:')
-                      : '',
-        });
-
-        menuComboRow.connect('notify::selected', () => {
-            const selected = menuComboRow.selected;
-            if (selected === 0) {
-                titleEntryRow.title = '';
-                titleEntryRow.text = '';
-                titleEntryRow.visible = false;
-            } else if (selected === 2) {
-                titleEntryRow.title = _('Icon name:');
-                titleEntryRow.text =
-                    settings.get_string('menuicon-setting') || '';
-                titleEntryRow.visible = true;
-            } else if (selected === 1) {
-                titleEntryRow.title = _('Menu title:');
-                titleEntryRow.text =
-                    settings.get_string('menutitle-setting') || '';
-                titleEntryRow.visible = true;
-            }
-        });
-
-        titleEntryRow.connect('changed', entry => {
-            const selected = menuComboRow.selected;
-            if (selected === 2) {
-                settings.set_string('menuicon-setting', entry.get_text());
-            } else if (selected === 1) {
-                settings.set_string('menutitle-setting', entry.get_text());
-            }
-        });
-
-        settings.bind(
-            'menuoptions-setting',
-            menuComboRow,
-            'selected',
-            Gio.SettingsBindFlags.DEFAULT
-        );
-
-        if (settings.get_int('menuoptions-setting') === 2) {
-            titleEntryRow.text = settings.get_string('menuicon-setting') || '';
-            titleEntryRow.visible = true;
-        } else if (settings.get_int('menuoptions-setting') === 1) {
-            titleEntryRow.text = settings.get_string('menutitle-setting') || '';
-            titleEntryRow.visible = true;
-        } else {
-            titleEntryRow.text = '';
-            titleEntryRow.visible = false;
-        }
-
-        const menuLocationList = new Gtk.StringList();
-        [_('Default'), _('Left'), _('Right')].forEach(choice =>
-            menuLocationList.append(choice)
-        );
-
-        const menuLocationComboRow = new Adw.ComboRow({
-            title: _('Menu Location'),
-            subtitle: _('Select location for the menu in the top bar'),
-            model: menuLocationList,
-            selected: settings.get_int('menulocation-setting'),
-        });
-
         const menuPositionSpinRow = new Adw.SpinRow({
             title: _('Menu Position'),
             subtitle: _('Adjust position of the menu in the top bar'),
@@ -492,19 +363,6 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
             }),
             value: settings.get_int('menuposition-setting'),
         });
-
-        menuLocationComboRow.connect('notify::selected', () => {
-            menuPositionSpinRow.visible = menuLocationComboRow.selected !== 0;
-        });
-
-        settings.bind(
-            'menulocation-setting',
-            menuLocationComboRow,
-            'selected',
-            Gio.SettingsBindFlags.DEFAULT
-        );
-
-        menuPositionSpinRow.visible = menuLocationComboRow.selected !== 0;
 
         settings.bind(
             'menuposition-setting',
@@ -545,9 +403,8 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
                             settings.reset(key);
                         }
                         page.refreshCommandList();
-                        menuComboRow.selected =
-                            settings.get_int('menuoptions-setting');
-                        menuComboRow.notify('selected');
+                        menuPositionSpinRow.value =
+                            settings.get_int('menuposition-setting');
                         window.add_toast(
                             Adw.Toast.new(_('All settings reset to defaults'))
                         );
@@ -565,22 +422,16 @@ export default class PlaneLlamacppPreferences extends ExtensionPreferences {
         // Layout
         page2.add(configGroup1);
         configGroup1.add(configRow1);
-        configGroup1.add(configRow2);
-        configGroup1.add(configRow3);
 
         page2.add(backupGroup1);
         backupGroup1.add(exportRow);
         backupGroup1.add(importRow);
 
         page2.add(settingsGroup1);
-        settingsGroup1.add(menuComboRow);
-        settingsGroup1.add(titleEntryRow);
-        settingsGroup1.add(menuLocationComboRow);
         settingsGroup1.add(menuPositionSpinRow);
         settingsGroup1.add(resetRow);
 
         page2.add(aboutGroup1);
-        aboutGroup1.add(aboutRow0);
         aboutGroup1.add(aboutRow1);
 
         this.addMaximizeButton(window);

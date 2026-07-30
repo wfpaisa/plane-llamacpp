@@ -7,8 +7,14 @@
         "strict": true,
         "skipLibCheck": true,
         "target": "ES2023",
-        "lib": ["ES2023"]
+        "lib": ["ES2023"],
+        "useDefineForClassFields": false
     },
     "include": ["ambient.d.ts"],
-    "files": ["extension.ts", "prefs.ts", "commandsUI.ts", "about.ts"]
+    "files": [
+        "extension.ts",
+        "serverManager.ts",
+        "prefs.ts",
+        "commandsUI.ts"
+    ]
 }
