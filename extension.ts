@@ -72,23 +72,22 @@ interface PanelIcons {
 interface MenuIcons {
     stopped: Gio.Icon;
     running: Gio.Icon;
+    /** Icon for the "Stop all llama-server processes" menu entry. */
+    killAll: Gio.Icon;
     /** Icon for the bottom "Settings" menu entry. */
     settings: Gio.Icon;
 }
 
-/** Minimum opacity of the panel button at the dim end of the blink. */
-const BLINK_DIM_OPACITY = 90;
-/**
- * Duration (ms) of each blink phase; a full dim-to-bright cycle takes twice
- * this. St has no @keyframes, so the blink is driven with chained Clutter
- * transitions instead (same approach as plane-tts/extension.js).
- */
-const BLINK_PHASE_MS = 1000;
+/** Duration (ms) of one full 360° turn of the loading spinner. */
+const SPIN_PERIOD_MS = 1000;
+/** Interval (ms) between spin steps; ~33 fps is smooth enough for a panel glyph. */
+const SPIN_TICK_MS = 30;
 
 /** Options the extension passes to the indicator when (re)building the menu. */
 interface BuildOptions {
     getState: (index: number) => ServerState;
     onActivate: (index: number, name: string, command: string) => void;
+    onKillAll: () => void;
     onOpenPrefs: () => void;
 }
 
@@ -98,13 +97,16 @@ const LlamacppIndicator = GObject.registerClass(
         _icon!: St.Icon;
         _icons!: PanelIcons;
         _menuIcons!: MenuIcons;
-        _blinking = false;
+        /** GLib source id of the running spin loop, or null when not spinning. */
+        _spinTimeout: number | null = null;
         /** Per-script menu widgets keyed by command index. */
         _items!: Map<number, {icon: St.Icon}>;
 
         _init() {
             super._init(0.5, _('Plane Llamacpp'));
             this._items = new Map();
+            // Ensure the spin timeout never outlives the actor.
+            this.connect('destroy', () => this._stopSpin());
         }
 
         /** Create the panel icon (custom SVG) as a direct child of the button. */
@@ -253,6 +255,14 @@ const LlamacppIndicator = GObject.registerClass(
             }
 
             menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            const killAllItem = new PopupMenu.PopupImageMenuItem(
+                _('Stop all llama-server processes'),
+                this._menuIcons.killAll
+            );
+            killAllItem.connect('activate', () => opts.onKillAll());
+            menu.addMenuItem(killAllItem);
+
             const prefsItem = new PopupMenu.PopupImageMenuItem(
                 _('Settings'),
                 this._menuIcons.settings
@@ -365,50 +375,60 @@ const LlamacppIndicator = GObject.registerClass(
 
         /**
          * Paint the whole panel button background from the aggregated state,
-         * swap in the "loading" glyph while starting, and blink the button
-         * only while starting; "running" settles into a solid green so a
-         * server that stays up indefinitely doesn't blink forever.
+         * swap in the "loading" glyph while starting, and spin that glyph only
+         * while starting; "running" settles into a solid green so a server that
+         * stays up indefinitely doesn't spin forever.
          */
         setPanelState(globalState: 'idle' | 'starting' | 'running') {
             this.remove_style_class_name('llamacpp-running');
             this.remove_style_class_name('llamacpp-starting');
-            this._icon.gicon = this._icons.normal;
 
             if (globalState === 'running') {
                 this.add_style_class_name('llamacpp-running');
             } else if (globalState === 'starting') {
-                this._icon.gicon = this._icons.starting;
                 this.add_style_class_name('llamacpp-starting');
             }
 
-            if (globalState === 'starting') this._startBlink();
-            else this._stopBlink();
+            if (globalState === 'starting') {
+                this._icon.gicon = this._icons.starting;
+                this._startSpin();
+            } else {
+                this._stopSpin();
+                this._icon.gicon = this._icons.normal;
+            }
         }
 
-        /** Start the panel-wide opacity blink (no-op if already running). */
-        _startBlink() {
-            if (this._blinking) return;
-            this._blinking = true;
-            this._pulseBlink(true);
+        /**
+         * Start rotating the loading glyph (no-op if already spinning). The
+         * spin is driven by a plain GLib timeout that steps the rotation angle
+         * itself: unlike `ease()`, this never depends on a Clutter transition
+         * name resolving, so it can't throw inside `setPanelState` (a throw
+         * there once aborted the server's readiness detection, leaving the
+         * panel stuck amber).
+         */
+        _startSpin() {
+            if (this._spinTimeout !== null) return;
+            // Rotate about the icon's own centre, not its top-left corner.
+            this._icon.set_pivot_point(0.5, 0.5);
+            const stepDeg = 360 * (SPIN_TICK_MS / SPIN_PERIOD_MS);
+            this._spinTimeout = GLib.timeout_add(
+                GLib.PRIORITY_DEFAULT,
+                SPIN_TICK_MS,
+                () => {
+                    this._icon.rotationAngleZ =
+                        (this._icon.rotationAngleZ + stepDeg) % 360;
+                    return GLib.SOURCE_CONTINUE;
+                }
+            );
         }
 
-        /** Stop the blink and snap the button back to full opacity. */
-        _stopBlink() {
-            if (!this._blinking) return;
-            this._blinking = false;
-            this.remove_all_transitions();
-            this.opacity = 255;
-        }
-
-        /** One fade phase of the blink loop; re-arms itself until `_stopBlink()`. */
-        _pulseBlink(dim: boolean) {
-            if (!this._blinking) return;
-            this.ease({
-                opacity: dim ? BLINK_DIM_OPACITY : 255,
-                duration: BLINK_PHASE_MS,
-                mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-                onComplete: () => this._pulseBlink(!dim),
-            });
+        /** Stop the spin and snap the glyph back to its upright angle. */
+        _stopSpin() {
+            if (this._spinTimeout !== null) {
+                GLib.Source.remove(this._spinTimeout);
+                this._spinTimeout = null;
+            }
+            this._icon.rotationAngleZ = 0;
         }
     }
 );
@@ -446,13 +466,24 @@ export default class PlaneLlamacppExtension extends Extension {
         this._menuIcons = {
             stopped: iconFile('play-large-symbolic.svg'),
             running: iconFile('stop-large-symbolic.svg'),
+            killAll: iconFile('kill-symbolic.svg'),
             settings: iconFile('settings-symbolic.svg'),
         };
 
         this._manager = new ServerManager({
             onStateChange: (index, state) => {
-                this._indicator?.setItemState(index, state);
-                this._indicator?.setPanelState(this._manager!.getGlobalState());
+                // Never let a drawing error propagate back into the manager:
+                // this callback runs mid-`_spawn`, before the server's stdout
+                // readers are wired, so a throw here would abort readiness
+                // detection and strand the panel on "starting" (amber).
+                try {
+                    this._indicator?.setItemState(index, state);
+                    this._indicator?.setPanelState(
+                        this._manager!.getGlobalState()
+                    );
+                } catch (e) {
+                    console.log(`[Plane Llamacpp] indicator update failed: ${e}`);
+                }
             },
             onNotify: (title, body, isError) =>
                 this._notify(title, body, isError),
@@ -540,6 +571,7 @@ export default class PlaneLlamacppExtension extends Extension {
             getState: index => this._manager!.getState(index),
             onActivate: (index, name, command) =>
                 this._manager!.toggle(index, name, command),
+            onKillAll: () => this._manager!.killAllExternal(),
             onOpenPrefs: () => this.openPreferences(),
         });
 

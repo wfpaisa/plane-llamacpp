@@ -45,6 +45,39 @@ const READY_PATTERN =
     /server is listening|listening on|HTTP server listening|starting the main loop/i;
 
 /**
+ * Line printed by llama-server when it cannot take the HTTP port (typically
+ * because another process — often an orphaned llama-server from a previous
+ * session — is already listening on it). Matching this flips the server from
+ * "starting" (yellow) straight to a clear error instead of hanging yellow
+ * forever, since a failed bind never produces the READY_PATTERN line.
+ */
+const BIND_ERROR_PATTERN =
+    /address already in use|couldn't bind|could not bind|failed to bind|error while binding|bind_to_port|error binding|server listen.*fail|failed to listen/i;
+
+/**
+ * Best-effort check for whether something is already listening on `port` at
+ * localhost. Used to fail fast with a clear message before spawning a server
+ * that would just collide with an orphaned process. A short timeout keeps the
+ * (synchronous) probe from stalling the shell; a refused connection — the
+ * normal "port free" case on localhost — returns almost instantly.
+ */
+function isPortInUse(port: number): boolean {
+    const client = new Gio.SocketClient();
+    client.timeout = 1; // seconds
+    try {
+        const conn = client.connect_to_host(`127.0.0.1:${port}`, 0, null);
+        if (conn) {
+            conn.close(null);
+            return true;
+        }
+    } catch {
+        // Connection refused / no route: nothing is listening there.
+        return false;
+    }
+    return false;
+}
+
+/**
  * Extract the TCP port from a llama-server command line. Matches `--port N`,
  * `--port=N`, `-p N` and `-p=N`. The flag must be preceded by whitespace (or be
  * at the start) so that unrelated flags such as `--top-p 0.95` are not matched.
@@ -64,6 +97,8 @@ interface ServerInstance {
     killTimeout: number | null;
     stopping: boolean;
     ready: boolean;
+    /** Set once a fatal bind error is seen, to suppress crash/stop notices. */
+    failed: boolean;
     /** One-shot callback run after this instance fully exits (port hand-off). */
     onExit: (() => void) | null;
 }
@@ -117,6 +152,21 @@ export class ServerManager {
             }
         }
 
+        // The port is not held by any server we track. If something else is
+        // already listening there (commonly an orphaned llama-server left over
+        // from a previous session that was closed without stopping it), a new
+        // server could never bind and would hang "starting" forever — so fail
+        // fast with a message the user can act on.
+        if (isPortInUse(port)) {
+            this._cb.onNotify(
+                `No se pudo iniciar «${name}»`,
+                `El puerto ${port} ya está ocupado por otro proceso, probablemente un llama-server anterior que quedó abierto. Ciérralo (por ejemplo con «pkill llama-server») o cambia el puerto en el comando.`,
+                true
+            );
+            this._cb.onStateChange(index, 'stopped');
+            return;
+        }
+
         this._spawn(index, name, command, port);
     }
 
@@ -155,6 +205,40 @@ export class ServerManager {
     toggle(index: number, name: string, command: string): void {
         if (this.getState(index) === 'stopped') this.start(index, name, command);
         else this.stop(index);
+    }
+
+    /**
+     * Stop every `llama-server` process on the machine, including orphans this
+     * extension is not tracking (e.g. left over from a previous session that
+     * was closed without stopping its servers). The servers we do track are
+     * stopped through the normal path first, so their menu state clears and no
+     * spurious crash is reported; a `pkill` sweep then catches the rest.
+     */
+    killAllExternal(): void {
+        for (const index of [...this._servers.keys()]) this.stop(index);
+
+        try {
+            // `-f` matches the full command line so it reaches the server no
+            // matter where the binary lives; the exact string "llama-server"
+            // won't hit unrelated tools such as "plane-llama-bench".
+            Gio.Subprocess.new(
+                ['pkill', '-TERM', '-f', 'llama-server'],
+                Gio.SubprocessFlags.NONE
+            );
+        } catch (e) {
+            this._cb.onNotify(
+                'Error',
+                `No se pudieron detener los servidores: ${e}`,
+                true
+            );
+            return;
+        }
+
+        this._cb.onNotify(
+            'Servidores detenidos',
+            'Se envió la señal de detención a todos los procesos llama-server.',
+            false
+        );
     }
 
     /** Tear everything down: SIGTERM all servers and drop all tracking. */
@@ -210,6 +294,7 @@ export class ServerManager {
             killTimeout: null,
             stopping: false,
             ready: false,
+            failed: false,
             onExit: null,
         };
         this._servers.set(index, inst);
@@ -247,7 +332,7 @@ export class ServerManager {
                     tail || 'El servidor terminó inesperadamente.',
                     true
                 );
-            } else if (inst.stopping) {
+            } else if (inst.stopping && !inst.failed) {
                 this._cb.onNotify('Servidor detenido', name, false);
             }
 
@@ -292,6 +377,25 @@ export class ServerManager {
                         inst.stderrTail.push(line);
                         if (inst.stderrTail.length > STDERR_TAIL_MAX)
                             inst.stderrTail.shift();
+                    }
+
+                    // A failed port bind never yields a READY line, so catch it
+                    // explicitly and tear the doomed process down with a clear
+                    // message instead of leaving the icon stuck on yellow.
+                    if (
+                        !inst.ready &&
+                        !inst.failed &&
+                        BIND_ERROR_PATTERN.test(line)
+                    ) {
+                        inst.failed = true;
+                        this._cb.onNotify(
+                            `No se pudo iniciar «${inst.name}»`,
+                            `El puerto ${inst.port} ya está ocupado por otro proceso, probablemente un llama-server anterior que quedó abierto. Ciérralo (por ejemplo con «pkill llama-server») o cambia el puerto en el comando.`,
+                            true
+                        );
+                        this.stop(index);
+                        pump();
+                        return;
                     }
 
                     if (!inst.ready && READY_PATTERN.test(line)) {

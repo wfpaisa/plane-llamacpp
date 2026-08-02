@@ -40,6 +40,9 @@
  * St.BoxLayout. */
 .llamacpp-model-box {
     spacing: 6px;
+    /* Keep the last badge from butting against the play/stop icon when the
+     * row is wide enough to fill all the available width. */
+    padding-right: 12px;
 }
 
 .llamacpp-model-org {
