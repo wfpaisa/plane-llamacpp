@@ -15,6 +15,7 @@
         "extension.ts",
         "serverManager.ts",
         "prefs.ts",
-        "commandsUI.ts"
+        "commandsUI.ts",
+        "modelParser.ts"
     ]
 }

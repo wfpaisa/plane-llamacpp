@@ -12,7 +12,7 @@ node_modules/.bun-install: package.json
 	bun install
 	@touch node_modules/.bun-install
 
-TS_SOURCES := extension.ts serverManager.ts prefs.ts commandsUI.ts ambient.d.ts
+TS_SOURCES := extension.ts serverManager.ts prefs.ts commandsUI.ts modelParser.ts ambient.d.ts
 
 dist/extension.js dist/prefs.js: node_modules/.bun-install $(TS_SOURCES)
 	bun run build

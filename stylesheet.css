@@ -34,3 +34,58 @@
 .llamacpp-status-running {
     color: #e01b24; /* green */
 }
+
+/* Model row: `org/` + base name + coloured badges (ported from the Plane
+ * Llama Bench history table). `spacing` is the gap between children of the
+ * St.BoxLayout. */
+.llamacpp-model-box {
+    spacing: 6px;
+}
+
+.llamacpp-model-org {
+    font-size: 0.8em;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.llamacpp-model-name {
+    font-weight: 600;
+}
+
+/* Badges mirroring PrimeNG `p-tag` severities. Modern "soft" style tuned for
+ * the dark GNOME popup: a low-alpha tinted fill, a vivid same-hue label and a
+ * faint hairline border so each chip reads clearly without shouting. */
+.llamacpp-tag {
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+}
+
+/* size — severity="info" (blue) */
+.llamacpp-tag-info {
+    background-color: rgba(56, 139, 253, 0.16);
+    color: #79c0ff;
+    border-color: rgba(56, 139, 253, 0.4);
+}
+
+/* tags (GGUF, IT, QAT…) — severity="secondary" (slate) */
+.llamacpp-tag-secondary {
+    background-color: rgba(148, 163, 184, 0.16);
+    color: #cbd5e1;
+    border-color: rgba(148, 163, 184, 0.32);
+}
+
+/* quant — no severity (emerald accent) */
+.llamacpp-tag-default {
+    background-color: rgba(46, 209, 133, 0.16);
+    color: #56d4a0;
+    border-color: rgba(46, 209, 133, 0.4);
+}
+
+/* MTP — severity="warn" (amber) */
+.llamacpp-tag-warn {
+    background-color: rgba(240, 158, 30, 0.16);
+    color: #f0b429;
+    border-color: rgba(240, 158, 30, 0.42);
+}

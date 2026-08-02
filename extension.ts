@@ -39,6 +39,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {ServerManager, ServerState} from './serverManager.js';
+import {extractModelId, parseModel, ParsedModel} from './modelParser.js';
 
 const numberOfCommands = 99;
 
@@ -276,7 +277,18 @@ const LlamacppIndicator = GObject.registerClass(
         ) {
             const state = opts.getState(index);
             const item = new PopupMenu.PopupMenuItem(name);
-            item.label.x_expand = true;
+
+            // If the command references a model (`-hf`/`-m`), render org + base
+            // name + coloured badges (size/tags/quant/MTP) exactly like the
+            // Plane Llama Bench history table; otherwise keep the plain name.
+            const modelId = extractModelId(command);
+            const parsed = modelId ? parseModel(modelId) : null;
+            if (parsed && parsed.base) {
+                item.label.visible = false;
+                item.add_child(this._buildModelBox(parsed));
+            } else {
+                item.label.x_expand = true;
+            }
 
             const icon = new St.Icon({
                 style_class: `popup-menu-icon ${STATE_CLASS[state]}`,
@@ -292,6 +304,53 @@ const LlamacppIndicator = GObject.registerClass(
 
             this._items.set(index, {icon});
             targetMenu.addMenuItem(item);
+        }
+
+        /**
+         * Build the `org/` + base-name + badge row for a parsed model id. The
+         * box carries `x_expand` so the play/stop icon still sits flush right.
+         */
+        _buildModelBox(parsed: ParsedModel): St.BoxLayout {
+            const box = new St.BoxLayout({
+                style_class: 'llamacpp-model-box',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            if (parsed.org) {
+                box.add_child(
+                    new St.Label({
+                        text: `${parsed.org}/`,
+                        style_class: 'llamacpp-model-org',
+                        y_align: Clutter.ActorAlign.CENTER,
+                    })
+                );
+            }
+            box.add_child(
+                new St.Label({
+                    text: parsed.base,
+                    style_class: 'llamacpp-model-name',
+                    y_align: Clutter.ActorAlign.CENTER,
+                })
+            );
+            if (parsed.size) box.add_child(this._makeTag(parsed.size, 'info'));
+            for (const tag of parsed.tags)
+                box.add_child(this._makeTag(tag, 'secondary'));
+            if (parsed.quant)
+                box.add_child(this._makeTag(parsed.quant, 'default'));
+            if (parsed.mtp) box.add_child(this._makeTag('MTP', 'warn'));
+            return box;
+        }
+
+        /** One coloured badge (St.Label) mirroring a PrimeNG `p-tag` severity. */
+        _makeTag(
+            text: string,
+            severity: 'info' | 'secondary' | 'default' | 'warn'
+        ): St.Label {
+            return new St.Label({
+                text,
+                style_class: `llamacpp-tag llamacpp-tag-${severity}`,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
         }
 
         /** Update a script's status icon in place (color + glyph). */
@@ -364,6 +423,7 @@ export default class PlaneLlamacppExtension extends Extension {
     _notifSource: MessageTray.Source | null = null;
     _settingsSignals: number[] = [];
     _commandRefreshTimeout: number | null = null;
+    _sessionModeSignal: number | null = null;
 
     enable() {
         this._settings = this.getSettings();
@@ -426,11 +486,25 @@ export default class PlaneLlamacppExtension extends Extension {
                 )
             );
         }
+
+        // The extension keeps running behind the lock screen (see
+        // `session-modes` in metadata.json) so that locking the screen never
+        // stops the tracked `llama-server` processes. The panel icon itself
+        // must still stay hidden while locked, so toggle its visibility with
+        // the session mode instead of tearing anything down.
+        this._sessionModeSignal = Main.sessionMode.connect('updated', () =>
+            this._updateIndicatorVisibility()
+        );
     }
 
     disable() {
         for (const id of this._settingsSignals) this._settings?.disconnect(id);
         this._settingsSignals = [];
+
+        if (this._sessionModeSignal !== null) {
+            Main.sessionMode.disconnect(this._sessionModeSignal);
+            this._sessionModeSignal = null;
+        }
 
         if (this._commandRefreshTimeout !== null) {
             GLib.Source.remove(this._commandRefreshTimeout);
@@ -473,6 +547,18 @@ export default class PlaneLlamacppExtension extends Extension {
         Main.panel.addToStatusArea(this.uuid, this._indicator, pos, 'right');
 
         this._indicator.setPanelState(this._manager!.getGlobalState());
+        this._updateIndicatorVisibility();
+    }
+
+    /**
+     * Hide the panel icon while the screen is locked ('unlock-dialog' session
+     * mode) and show it again once unlocked. This only toggles visibility;
+     * `_manager` keeps running untouched, so locking the screen never stops
+     * the tracked servers.
+     */
+    _updateIndicatorVisibility() {
+        if (!this._indicator) return;
+        this._indicator.visible = Main.sessionMode.currentMode !== 'unlock-dialog';
     }
 
     _refreshIndicator() {
