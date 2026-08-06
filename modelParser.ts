@@ -21,7 +21,7 @@ export interface ParsedModel {
     quant: string | null;
     /** True when the slug carries an `MTP` marker (speculative/MTP draft). */
     mtp: boolean;
-    /** Recognised finetune/format tags, e.g. `IT`, `QAT`, `GGUF`. */
+    /** Recognised finetune tags, e.g. `IT`, `QAT` (`GGUF` is never shown). */
     tags: string[];
     /** Organisation before the first `/`, e.g. `DavidAU`, or null. */
     org: string | null;
@@ -55,6 +55,12 @@ const KNOWN_TAGS = new Set([
 ]);
 
 /**
+ * Tags recognised for parsing (so they don't leak into the base name) but not
+ * worth a badge: every model we run is a GGUF, so the chip carried no signal.
+ */
+const HIDDEN_TAGS = new Set(['gguf']);
+
+/**
  * Normalise a model id to its comparable base (no `org/`, no `:quant` suffix).
  * e.g. `unsloth/Qwen3.6-35B-A3B-UD-Q4_K_S` → `Qwen3.6-35B-A3B-UD-Q4_K_S`.
  */
@@ -65,8 +71,8 @@ export function modelBase(m: string | null | undefined): string | null {
 
 /**
  * Split a model id into `{ org, base, size, quant, mtp, tags }`.
- *   `DavidAU/Qwen3.5-9B-...-MTP-GGUF:Q6_K`
- *     → { org:"DavidAU", base:"Qwen3.5", size:"9B", quant:"Q6_K", mtp:true, tags:["GGUF"] }
+ *   `DavidAU/Qwen3.5-9B-...-IT-MTP-GGUF:Q6_K`
+ *     → { org:"DavidAU", base:"Qwen3.5", size:"9B", quant:"Q6_K", mtp:true, tags:["IT"] }
  * Returns null for an empty/absent id.
  */
 export function parseModel(m: string | null | undefined): ParsedModel | null {
@@ -129,7 +135,8 @@ export function parseModel(m: string | null | undefined): ParsedModel | null {
     const tags: string[] = [];
     const tagStart = sizeEnd >= 0 ? sizeEnd + 1 : baseEnd;
     for (let i = tagStart; i < parts.length; i++) {
-        if (KNOWN_TAGS.has(parts[i].toLowerCase())) {
+        const low = parts[i].toLowerCase();
+        if (KNOWN_TAGS.has(low) && !HIDDEN_TAGS.has(low)) {
             tags.push(parts[i].toUpperCase());
         }
     }
@@ -158,4 +165,45 @@ export function extractModelId(command: string): string | null {
     }
 
     return null;
+}
+
+/**
+ * Pull the context window out of a llama-server invocation: the argument to
+ * `-c`/`--ctx-size` (also accepted as `-c=32816`). Returns null when the flag
+ * is absent or not a positive number, so the badge is simply not drawn.
+ */
+export function extractCtxSize(command: string): number | null {
+    const tokens = command
+        .replace(/\\\s*\n/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        let raw: string | undefined;
+        if (t === '-c' || t === '--ctx-size') raw = tokens[i + 1];
+        else {
+            const m = /^(?:-c|--ctx-size)=(.+)$/.exec(t);
+            if (m) raw = m[1];
+        }
+        if (raw === undefined) continue;
+        const n = Number(raw.replace(/[_,]/g, ''));
+        if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+    }
+
+    return null;
+}
+
+/**
+ * Compact context size for the badge, in decimal K so the label matches the
+ * number written in the command: `120000` → `120K`, `32816` → `32.8K`,
+ * `131072` → `131.1K`. Anything under 1000 stays literal.
+ */
+export function formatCtxSize(n: number): string {
+    if (n < 1000) return String(n);
+    const k = n / 1000;
+    const rounded = Math.round(k);
+    // Close enough to a round K to show it clean (32000 → `32K`).
+    if (Math.abs(k - rounded) < 0.05) return `${rounded}K`;
+    return `${k.toFixed(1)}K`;
 }

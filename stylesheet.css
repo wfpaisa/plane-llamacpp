@@ -72,7 +72,7 @@
     border-color: rgba(56, 139, 253, 0.4);
 }
 
-/* tags (GGUF, IT, QAT…) — severity="secondary" (slate) */
+/* tags (IT, QAT…) — severity="secondary" (slate) */
 .llamacpp-tag-secondary {
     background-color: rgba(148, 163, 184, 0.16);
     color: #cbd5e1;
@@ -84,6 +84,17 @@
     background-color: rgba(46, 209, 133, 0.16);
     color: #56d4a0;
     border-color: rgba(46, 209, 133, 0.4);
+}
+
+/* context window (`--ctx-size`) — neutral grey: it's a secondary detail and
+ * shouldn't compete with the coloured badges. Sits at the right end of the
+ * row, so keep a gap from the badges on the left even when the row is too
+ * narrow for the layout to leave slack. */
+.llamacpp-tag-ctx {
+    margin-left: 18px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.65);
+    border-color: rgba(255, 255, 255, 0.18);
 }
 
 /* MTP — severity="warn" (amber) */

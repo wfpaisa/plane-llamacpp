@@ -39,7 +39,13 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {ServerManager, ServerState} from './serverManager.js';
-import {extractModelId, parseModel, ParsedModel} from './modelParser.js';
+import {
+    extractCtxSize,
+    extractModelId,
+    formatCtxSize,
+    parseModel,
+    ParsedModel,
+} from './modelParser.js';
 
 const numberOfCommands = 99;
 
@@ -289,13 +295,15 @@ const LlamacppIndicator = GObject.registerClass(
             const item = new PopupMenu.PopupMenuItem(name);
 
             // If the command references a model (`-hf`/`-m`), render org + base
-            // name + coloured badges (size/tags/quant/MTP) exactly like the
+            // name + coloured badges (size/tags/quant/ctx/MTP) exactly like the
             // Plane Llama Bench history table; otherwise keep the plain name.
             const modelId = extractModelId(command);
             const parsed = modelId ? parseModel(modelId) : null;
             if (parsed && parsed.base) {
                 item.label.visible = false;
-                item.add_child(this._buildModelBox(parsed));
+                item.add_child(
+                    this._buildModelBox(parsed, extractCtxSize(command))
+                );
             } else {
                 item.label.x_expand = true;
             }
@@ -320,7 +328,10 @@ const LlamacppIndicator = GObject.registerClass(
          * Build the `org/` + base-name + badge row for a parsed model id. The
          * box carries `x_expand` so the play/stop icon still sits flush right.
          */
-        _buildModelBox(parsed: ParsedModel): St.BoxLayout {
+        _buildModelBox(
+            parsed: ParsedModel,
+            ctxSize: number | null = null
+        ): St.BoxLayout {
             const box = new St.BoxLayout({
                 style_class: 'llamacpp-model-box',
                 x_expand: true,
@@ -348,13 +359,25 @@ const LlamacppIndicator = GObject.registerClass(
             if (parsed.quant)
                 box.add_child(this._makeTag(parsed.quant, 'default'));
             if (parsed.mtp) box.add_child(this._makeTag('MTP', 'warn'));
+            // Context window last and pushed to the far right, so it sits next
+            // to the play/stop icon and lines up across every row: it takes the
+            // slack left by the name/badges (x_expand) but hugs its end.
+            if (ctxSize !== null) {
+                const ctxTag = this._makeTag(
+                    `${formatCtxSize(ctxSize)} ctx`,
+                    'ctx'
+                );
+                ctxTag.x_expand = true;
+                ctxTag.x_align = Clutter.ActorAlign.END;
+                box.add_child(ctxTag);
+            }
             return box;
         }
 
         /** One coloured badge (St.Label) mirroring a PrimeNG `p-tag` severity. */
         _makeTag(
             text: string,
-            severity: 'info' | 'secondary' | 'default' | 'warn'
+            severity: 'info' | 'secondary' | 'default' | 'warn' | 'ctx'
         ): St.Label {
             return new St.Label({
                 text,
